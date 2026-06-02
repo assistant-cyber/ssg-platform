@@ -1,0 +1,57 @@
+{
+  "expo": {
+    "name": "SSG Field",
+    "slug": "ssg-field",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "userInterfaceStyle": "light",
+    "newArchEnabled": true,
+    "splash": {
+      "image": "./assets/splash.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#83A94B"
+    },
+    "ios": {
+      "supportsTablet": false,
+      "bundleIdentifier": "com.scottishstainedglass.field",
+      "infoPlist": {
+        "NSCameraUsageDescription": "SSG Field needs camera access to photograph stained glass windows.",
+        "NSPhotoLibraryUsageDescription": "SSG Field needs photo library access to save assessment photos.",
+        "NSMicrophoneUsageDescription": "Required by camera permission."
+      }
+    },
+    "android": {
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/adaptive-icon.png",
+        "backgroundColor": "#83A94B"
+      },
+      "package": "com.scottishstainedglass.field",
+      "permissions": [
+        "CAMERA",
+        "READ_EXTERNAL_STORAGE",
+        "WRITE_EXTERNAL_STORAGE"
+      ]
+    },
+    "plugins": [
+      "expo-router",
+      [
+        "expo-camera",
+        {
+          "cameraPermission": "SSG Field needs camera access to photograph stained glass windows."
+        }
+      ],
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "SSG Field needs access to your photos."
+        }
+      ],
+      "expo-secure-store"
+    ],
+    "scheme": "ssg-field",
+    "experiments": {
+      "typedRoutes": true
+    }
+  }
+}

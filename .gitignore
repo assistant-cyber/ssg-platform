@@ -1,0 +1,33 @@
+# Dependencies
+node_modules/
+backend/.venv/
+__pycache__/
+*.pyc
+
+# Build outputs
+.next/
+.next-broken-*/
+dashboard/.vercel/
+backend/reports/
+backend/uploads/
+backend/*.db
+backend/_cleanup_backups/
+
+# Environment secrets
+.env
+.env.local
+*.env
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Misc
+*.log
+*.swp
+*.swo
+
+# Mobile builds
+mobile/dist/
+mobile/android/
+mobile/ios/

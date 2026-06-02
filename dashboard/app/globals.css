@@ -1,0 +1,49 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@import url('https://fonts.googleapis.com/css2?family=Source+Serif+Pro:wght@400;600;700&display=swap');
+
+@layer base {
+  html { @apply text-ssg-charcoal font-sans bg-ssg-lighter; }
+  body { @apply bg-ssg-lighter font-sans text-ssg-charcoal; }
+  h1, h2, h3, h4, h5, h6 { @apply font-serif; }
+}
+
+@layer components {
+  .btn-primary {
+    @apply inline-flex min-h-11 items-center justify-center gap-2 rounded-xl bg-ssg-green px-4 py-2 text-sm font-semibold text-white shadow-sm hover:bg-ssg-dark active:scale-95 transition-all disabled:opacity-50 disabled:cursor-not-allowed;
+  }
+  .btn-secondary {
+    @apply inline-flex min-h-11 items-center justify-center gap-2 rounded-xl border border-ssg-green/30 bg-white px-4 py-2 text-sm font-semibold text-ssg-green hover:bg-ssg-light active:scale-95 transition-all disabled:opacity-50;
+  }
+  .btn-ghost {
+    @apply inline-flex min-h-11 items-center gap-2 rounded-xl px-3 py-2 text-sm font-medium text-black/70 hover:bg-white transition-all;
+  }
+  .card {
+    @apply rounded-2xl border border-black/5 bg-white shadow-[0_12px_30px_rgba(44,44,44,0.08)];
+  }
+  .input {
+    @apply min-h-11 w-full rounded-xl border border-black/10 bg-white px-4 py-3 text-[15px] text-ssg-charcoal placeholder:text-ssg-muted focus:outline-none focus:ring-2 focus:ring-ssg-green focus:border-transparent transition;
+  }
+  .label {
+    @apply mb-1 block text-sm font-semibold text-ssg-charcoal/80;
+  }
+  .tab-active {
+    @apply border-b-2 border-ssg-green text-ssg-green font-semibold;
+  }
+  .tab-inactive {
+    @apply border-b-2 border-transparent text-gray-500 hover:text-gray-700 font-medium;
+  }
+  .ssg-shell {
+    @apply bg-ssg-lighter;
+  }
+  .ssg-focus-ring {
+    @apply focus:outline-none focus:ring-2 focus:ring-ssg-green focus:border-transparent;
+  }
+}
+
+/* Activity log scrollbar */
+.log-scroll::-webkit-scrollbar { width: 4px; }
+.log-scroll::-webkit-scrollbar-track { background: #f1f1f1; }
+.log-scroll::-webkit-scrollbar-thumb { background: #83A94B; border-radius: 2px; }
