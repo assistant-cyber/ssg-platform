@@ -112,13 +112,29 @@ def _photo_bytes(photo: Photo) -> bytes:
     return storage.download_bytes(photo.storage_url)
 
 
-def _archive_response(photos: list[Photo], archive_filename: str) -> StreamingResponse:
+def _photo_sort_key(photo: Photo):
+    """Sort key: window number numerically, then panel letter alphabetically."""
+    try:
+        win = int(photo.window_number) if photo.window_number else 99999
+    except (ValueError, TypeError):
+        win = 99999
+    panel = (photo.panel_letter or "").lower()
+    return (win, panel)
+
+
+def _archive_response(photos: list[Photo], archive_filename: str, folder_name: str = "") -> StreamingResponse:
     archive_buffer = io.BytesIO()
     used_names: set[str] = set()
 
+    # Sort photos: window number numerically, then panel letter a->z
+    sorted_photos = sorted(photos, key=_photo_sort_key)
+
+    prefix = f"{folder_name}/" if folder_name else ""
+
     with zipfile.ZipFile(archive_buffer, "w", compression=zipfile.ZIP_DEFLATED) as archive:
-        for photo in photos:
-            archive.writestr(_photo_download_name(photo, used_names), _photo_bytes(photo))
+        for photo in sorted_photos:
+            filename = _photo_download_name(photo, used_names)
+            archive.writestr(f"{prefix}{filename}", _photo_bytes(photo))
 
     archive_buffer.seek(0)
     return StreamingResponse(
@@ -295,7 +311,7 @@ def download_project_photos(
     ).strip("-") or "project"
     filename = f"{safe_project_name}-photos.zip"
 
-    return _archive_response(photos, filename)
+    return _archive_response(photos, filename, folder_name=safe_project_name)
 
 
 @router.post("/photos/download")
@@ -320,7 +336,7 @@ def download_selected_photos(
         if not ordered_photos:
             raise HTTPException(status_code=403, detail="Access denied")
 
-    return _archive_response(ordered_photos, "workspace-photos.zip")
+    return _archive_response(ordered_photos, "workspace-photos.zip", folder_name="photos")
 
 
 # ─── Update photo ─────────────────────────────────────────────────────────────
