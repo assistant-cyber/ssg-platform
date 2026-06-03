@@ -1,6 +1,6 @@
 'use client';
 
-import { Suspense, useEffect, useMemo, useState } from 'react';
+import { Suspense, startTransition, useEffect, useMemo, useState } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import {
   Camera,
@@ -24,6 +24,7 @@ import StatusFilter from '@/components/projects/StatusFilter';
 import Badge from '@/components/ui/Badge';
 
 type Section = 'projects' | 'photos' | 'reports' | 'team' | 'settings';
+type ProjectDetailsMap = Partial<Record<string, ProjectDetail | null>>;
 
 const SECTION_COPY: Record<Exclude<Section, 'projects'>, { title: string; body: string; icon: typeof Camera }> = {
   photos: {
@@ -91,14 +92,26 @@ function initialsFor(name: string) {
 function ProjectPhotoStrip({
   project,
   detail,
+  loading = false,
 }: {
   project: Project;
   detail: ProjectDetail | null;
+  loading?: boolean;
 }) {
   const recentPhotos = useMemo(
     () => [...(detail?.photos ?? [])].sort((a, b) => photoMoment(b) - photoMoment(a)).slice(0, 4),
     [detail],
   );
+
+  if (loading) {
+    return (
+      <div className="grid grid-cols-4 gap-2">
+        {[...Array(4)].map((_, index) => (
+          <div key={index} className="h-16 animate-pulse rounded-2xl bg-slate-100 md:h-20" />
+        ))}
+      </div>
+    );
+  }
 
   if (!recentPhotos.length) {
     return (
@@ -140,7 +153,7 @@ function ProjectListSection({
   eyebrow: string;
   body: string;
   projects: Project[];
-  projectDetails: Record<string, ProjectDetail | null>;
+  projectDetails: ProjectDetailsMap;
   loading: boolean;
   onOpenProject: (projectId: string) => void;
   layout?: 'vertical' | 'horizontal';
@@ -204,7 +217,11 @@ function ProjectListSection({
                   <p className="mb-3 text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500">
                     Recent Photos
                   </p>
-                  <ProjectPhotoStrip project={project} detail={projectDetails[project.id] ?? null} />
+                  <ProjectPhotoStrip
+                    project={project}
+                    detail={projectDetails[project.id] ?? null}
+                    loading={projectDetails[project.id] === undefined}
+                  />
                 </div>
 
                 <div className={layout === 'horizontal' ? 'hidden' : 'hidden items-center justify-end md:flex'}>
@@ -573,7 +590,7 @@ function ProjectsPageContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const [projects, setProjects] = useState<Project[]>([]);
-  const [projectDetails, setProjectDetails] = useState<Record<string, ProjectDetail | null>>({});
+  const [projectDetails, setProjectDetails] = useState<ProjectDetailsMap>({});
   const [loading, setLoading] = useState(true);
   const [detailsLoading, setDetailsLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -588,20 +605,10 @@ function ProjectsPageContent() {
     try {
       const data = await api.listProjects();
       const sorted = data.sort((a, b) => projectMoment(b) - projectMoment(a));
-      setProjects(sorted);
-
-      const detailEntries = await Promise.all(
-        sorted.map(async (project) => {
-          try {
-            const detail = await api.getProject(project.id);
-            return [project.id, detail] as const;
-          } catch {
-            return [project.id, null] as const;
-          }
-        }),
-      );
-
-      setProjectDetails(Object.fromEntries(detailEntries));
+      startTransition(() => {
+        setProjects(sorted);
+        setProjectDetails({});
+      });
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Unable to load dashboard data.';
 
@@ -616,13 +623,67 @@ function ProjectsPageContent() {
       setLoadError(message);
     } finally {
       setLoading(false);
-      setDetailsLoading(false);
     }
   };
 
   useEffect(() => {
     void load();
   }, []);
+
+  useEffect(() => {
+    if (!projects.length) {
+      setDetailsLoading(false);
+      return;
+    }
+
+    let cancelled = false;
+    const pendingIds = projects.map((project) => project.id);
+    const concurrency = Math.min(4, pendingIds.length);
+
+    setDetailsLoading(true);
+
+    const buffer: ProjectDetailsMap = {};
+    let bufferedCount = 0;
+
+    const flushBuffer = () => {
+      if (cancelled || bufferedCount === 0) return;
+      const updates = { ...buffer };
+      Object.keys(buffer).forEach((key) => delete buffer[key]);
+      bufferedCount = 0;
+      startTransition(() => {
+        setProjectDetails((current) => ({ ...current, ...updates }));
+      });
+    };
+
+    let nextIndex = 0;
+    const worker = async () => {
+      while (!cancelled) {
+        const currentIndex = nextIndex;
+        nextIndex += 1;
+        if (currentIndex >= pendingIds.length) return;
+
+        const id = pendingIds[currentIndex];
+
+        try {
+          buffer[id] = await api.getProject(id);
+        } catch {
+          buffer[id] = null;
+        }
+
+        bufferedCount += 1;
+        if (bufferedCount >= 6) flushBuffer();
+      }
+    };
+
+    void Promise.all(Array.from({ length: concurrency }, () => worker())).then(() => {
+      flushBuffer();
+      if (!cancelled) setDetailsLoading(false);
+    });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [projects]);
 
   const section = useMemo((): Section => {
     const raw = searchParams.get('section');
@@ -767,7 +828,7 @@ function ProjectsPageContent() {
               body="Keep active work at the top in the same list format, with the newest project photos visible in each row."
               projects={recentProjects}
               projectDetails={projectDetails}
-              loading={loading || detailsLoading}
+              loading={loading}
               onOpenProject={(projectId) => router.push(`/projects/${projectId}`)}
               layout="horizontal"
             />
@@ -778,7 +839,7 @@ function ProjectsPageContent() {
               body="Every project stays in the lower half for fast scanning, with the job name and its latest photos visible together."
               projects={filteredProjects}
               projectDetails={projectDetails}
-              loading={loading || detailsLoading}
+              loading={loading}
               onOpenProject={(projectId) => router.push(`/projects/${projectId}`)}
             />
           </>
