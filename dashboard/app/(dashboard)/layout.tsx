@@ -1,7 +1,7 @@
-import { Suspense } from 'react';
+import { Suspense, type ReactNode } from 'react';
 import Sidebar from '@/components/layout/Sidebar';
 
-export default function DashboardLayout({ children }: { children: React.ReactNode }) {
+export default function DashboardLayout({ children }: { children: ReactNode }) {
   return (
     <div className="ssg-shell flex min-h-screen bg-ssg-lighter">
       <Suspense fallback={<aside className="hidden min-h-screen w-72 shrink-0 border-r border-black/5 bg-[#f3efe7] md:flex" />}>
