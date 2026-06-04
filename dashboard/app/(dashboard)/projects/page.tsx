@@ -602,32 +602,60 @@ function ProjectsPageContent() {
     setDetailsLoading(true);
     setLoadError(null);
 
-    try {
-      const data = await api.listProjects();
-      const sorted = data.sort((a, b) => projectMoment(b) - projectMoment(a));
-      startTransition(() => {
-        setProjects(sorted);
-        setProjectDetails({});
-      });
-    } catch (error) {
-      const message = error instanceof Error ? error.message : 'Unable to load dashboard data.';
+    const MAX_RETRIES = 4;
+    const RETRY_DELAY_MS = 3500;
 
-      if (/not authenticated|401/i.test(message)) {
-        clearAuth();
-        router.replace('/login');
+    for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
+      try {
+        const data = await api.listProjects();
+        const sorted = data.sort((a, b) => projectMoment(b) - projectMoment(a));
+        startTransition(() => {
+          setProjects(sorted);
+          setProjectDetails({});
+        });
+        setLoading(false);
         return;
-      }
+      } catch (error) {
+        const message = error instanceof Error ? error.message : 'Unable to load dashboard data.';
 
-      setProjects([]);
-      setProjectDetails({});
-      setLoadError(message);
-    } finally {
-      setLoading(false);
+        if (/not authenticated|401/i.test(message)) {
+          clearAuth();
+          router.replace('/login');
+          return;
+        }
+
+        if (attempt < MAX_RETRIES) {
+          await new Promise<void>((resolve) => setTimeout(resolve, RETRY_DELAY_MS));
+          continue;
+        }
+
+        setProjects([]);
+        setProjectDetails({});
+        setLoadError(message);
+      }
     }
+    setLoading(false);
   };
 
   useEffect(() => {
     void load();
+  }, []);
+
+  // Reload when user returns to an idle tab — handles Railway cold-start
+  useEffect(() => {
+    const handleVisibility = () => {
+      if (document.visibilityState === 'visible') void load();
+    };
+    document.addEventListener('visibilitychange', handleVisibility);
+    return () => document.removeEventListener('visibilitychange', handleVisibility);
+  }, []);
+
+  // Keep Railway awake — silent ping every 4 minutes prevents cold-start
+  useEffect(() => {
+    const keepAlive = setInterval(() => {
+      fetch('/api-proxy/projects', { method: 'HEAD' }).catch(() => {});
+    }, 4 * 60 * 1000);
+    return () => clearInterval(keepAlive);
   }, []);
 
   useEffect(() => {
