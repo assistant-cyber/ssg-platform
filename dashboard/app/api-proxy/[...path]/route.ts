@@ -17,6 +17,17 @@ const HOP_BY_HOP_HEADERS = new Set([
   'upgrade',
 ]);
 
+// Headers that don't make sense to forward when we've buffered the upstream
+// body. Node's fetch transparently decompresses gzip/brotli/zstd responses,
+// so the bytes in the arrayBuffer are already decoded — forwarding the
+// content-encoding header alongside them would cause the browser to fail
+// decoding and produce an empty body. content-length is recomputed by Next
+// from the arrayBuffer.
+const BUFFERED_BODY_HEADERS = new Set([
+  'content-encoding',
+  'content-length',
+]);
+
 function buildUpstreamUrl(path: string[], search: string): string {
   const normalizedBase = UPSTREAM_API.endsWith('/') ? UPSTREAM_API.slice(0, -1) : UPSTREAM_API;
   const joinedPath = path.map(encodeURIComponent).join('/');
@@ -91,17 +102,23 @@ async function proxy(request: NextRequest, path: string[]) {
     );
   }
 
-  // Buffer the upstream body. Passing upstream.body (a ReadableStream)
-  // directly into a Response was producing empty 200 responses in production
-  // because content-length was being stripped and Next's stream relay couldn't
-  // re-derive it for some response shapes.
+  // Buffer the upstream body. Two reasons we can't pass upstream.body
+  // (a ReadableStream) directly into a Response here:
+  //   1. Earlier versions stripped content-length while still forwarding a
+  //      stream, and Vercel's edge couldn't always re-derive it, producing
+  //      empty 200 responses.
+  //   2. Node's fetch transparently decompresses gzip/brotli/zstd, so the
+  //      bytes we get back are already decoded — but the upstream headers
+  //      still carry content-encoding: gzip. Forwarding that header with
+  //      decoded bytes causes the browser to fail gunzipping and the page
+  //      sees an empty body.
   const upstreamBody = await upstream.arrayBuffer();
   const responseHeaders = new Headers(upstream.headers);
 
   for (const header of HOP_BY_HOP_HEADERS) {
-    // Keep content-length — Next sets it correctly from the arrayBuffer, and
-    // stripping it here caused empty-body responses on Vercel.
-    if (header === 'content-length') continue;
+    responseHeaders.delete(header);
+  }
+  for (const header of BUFFERED_BODY_HEADERS) {
     responseHeaders.delete(header);
   }
 
