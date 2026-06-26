@@ -91,13 +91,21 @@ async function proxy(request: NextRequest, path: string[]) {
     );
   }
 
+  // Buffer the upstream body. Passing upstream.body (a ReadableStream)
+  // directly into a Response was producing empty 200 responses in production
+  // because content-length was being stripped and Next's stream relay couldn't
+  // re-derive it for some response shapes.
+  const upstreamBody = await upstream.arrayBuffer();
   const responseHeaders = new Headers(upstream.headers);
 
   for (const header of HOP_BY_HOP_HEADERS) {
+    // Keep content-length — Next sets it correctly from the arrayBuffer, and
+    // stripping it here caused empty-body responses on Vercel.
+    if (header === 'content-length') continue;
     responseHeaders.delete(header);
   }
 
-  return new Response(upstream.body, {
+  return new Response(upstreamBody, {
     status: upstream.status,
     statusText: upstream.statusText,
     headers: responseHeaders,
