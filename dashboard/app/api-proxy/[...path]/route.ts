@@ -23,7 +23,34 @@ function buildUpstreamUrl(path: string[], search: string): string {
   return `${normalizedBase}/${joinedPath}${search}`;
 }
 
+function isLoopbackUrl(url: string): boolean {
+  try {
+    const { hostname } = new URL(url);
+    return hostname === 'localhost' || hostname === '127.0.0.1' || hostname === '::1';
+  } catch {
+    return true; // unparseable URL → treat as misconfigured
+  }
+}
+
 async function proxy(request: NextRequest, path: string[]) {
+  // Fail fast if the env var wasn't set on the serverless host. Without this
+  // guard the proxy silently fetches http://localhost:8000 inside Vercel's
+  // runtime, gets ECONNREFUSED, and returns an empty 200 that surfaces to the
+  // browser as an opaque "HTTP 500".
+  if (isLoopbackUrl(UPSTREAM_API) && process.env.VERCEL === '1') {
+    console.error(
+      '[api-proxy] NEXT_PUBLIC_API_URL is unset or points at a loopback address on Vercel. ' +
+        'Set it to the public backend URL (e.g. https://ssg-platform-production.up.railway.app).'
+    );
+    return new Response(
+      JSON.stringify({
+        detail:
+          'API proxy is misconfigured: NEXT_PUBLIC_API_URL is not set on this deployment.',
+      }),
+      { status: 502, headers: { 'content-type': 'application/json' } }
+    );
+  }
+
   const headers = new Headers();
 
   for (const [key, value] of request.headers.entries()) {
@@ -31,18 +58,39 @@ async function proxy(request: NextRequest, path: string[]) {
     headers.set(key, value);
   }
 
-  // Localtunnel blocks browser-looking traffic unless this header is present.
-  headers.set('bypass-tunnel-reminder', '1');
+  // Localtunnel-specific header — only relevant when upstream is a tunnel.
+  // Safe to keep unconditionally, but skipping it on direct HTTPS avoids
+  // confusing cache/CDN behaviour.
+  if (UPSTREAM_API.includes('loca.lt')) {
+    headers.set('bypass-tunnel-reminder', '1');
+  }
   headers.set('user-agent', 'ssg-dashboard-proxy');
 
   const init: RequestInit = {
     method: request.method,
     headers,
     redirect: 'manual',
+    cache: 'no-store',
     body: ['GET', 'HEAD'].includes(request.method) ? undefined : await request.arrayBuffer(),
   };
 
-  const upstream = await fetch(buildUpstreamUrl(path, request.nextUrl.search), init);
+  const upstreamUrl = buildUpstreamUrl(path, request.nextUrl.search);
+
+  let upstream: Response;
+  try {
+    upstream = await fetch(upstreamUrl, init);
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    console.error(`[api-proxy] upstream fetch failed for ${upstreamUrl}: ${message}`);
+    return new Response(
+      JSON.stringify({
+        detail: `Upstream API unreachable: ${message}`,
+        upstream: UPSTREAM_API,
+      }),
+      { status: 502, headers: { 'content-type': 'application/json' } }
+    );
+  }
+
   const responseHeaders = new Headers(upstream.headers);
 
   for (const header of HOP_BY_HOP_HEADERS) {
