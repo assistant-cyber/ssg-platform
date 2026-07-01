@@ -433,6 +433,40 @@ def _polish_brief_with_ai(text: str) -> str:
     return _polish_brief_fallback(text)
 
 
+# Section keys whose selected photos end up in the rendered PDF.
+_REPORT_SECTION_KEYS = (
+    "overview",
+    "current_condition",
+    "causes",
+    "hundred_year_plan",
+    "summary",
+)
+
+
+def _extract_used_photo_ids(narrative: dict, all_photos) -> set[str]:
+    """Return the set of photo ids the report actually renders.
+
+    Includes the cover photo and every section-selected photo. Used to
+    avoid downloading the project's full photo set for projects with
+    hundreds of photos — the report only needs the cover and the
+    section photos.
+    """
+    from processing.report_payload import extract_cover_photo_id, extract_section_photo_ids
+
+    used: set[str] = set()
+    cover_id = extract_cover_photo_id(narrative)
+    if cover_id:
+        used.add(str(cover_id))
+    for key in _REPORT_SECTION_KEYS:
+        for pid in extract_section_photo_ids(narrative, key):
+            used.add(str(pid))
+    # If the narrative doesn't name any photos (e.g. a fresh draft) fall back
+    # to the first photo so the cover page can still render.
+    if not used and all_photos:
+        used.add(str(all_photos[0].id))
+    return used
+
+
 # ─── Background task: generate report ────────────────────────────────────────
 
 def _generate_report_task(
@@ -455,18 +489,32 @@ def _generate_report_task(
         if not report:
             return
 
-        photos = (
+        # Only download / process the photos the report actually uses. For
+        # projects with hundreds of photos this used to take 5+ minutes
+        # (and frequently OOM-killed the Railway worker) because every
+        # photo was materialized to local disk even though only the cover
+        # and the section selections end up in the PDF.
+        all_photos = (
             db.query(Photo)
             .filter(Photo.project_id == project_id)
             .order_by(Photo.sort_order)
             .all()
         )
+        used_photo_ids = _extract_used_photo_ids(narrative, all_photos)
+        photos = [p for p in all_photos if p.id in used_photo_ids]
+        if not photos:
+            photos = all_photos[:1]  # fall back to the first photo for the cover
+
         output_dir = Path(settings.REPORTS_OUTPUT_PATH) / project_id
         output_dir.mkdir(parents=True, exist_ok=True)
         render_cache_dir = output_dir / "_media_cache"
         render_cache_dir.mkdir(parents=True, exist_ok=True)
 
         photos_dicts = _photos_to_dicts(photos, render_cache_dir)
+        # Keep the full photo list available to the condition sheet so the
+        # spreadsheet still has every window / panel even if they aren't in
+        # the PDF.
+        all_photos_dicts = _photos_to_dicts(all_photos, render_cache_dir)
 
         # ── 1. Generate condition spreadsheet ────────────────────────────────
 
@@ -478,7 +526,7 @@ def _generate_report_task(
         generate_condition_sheet_from_db(
             project_id=project_id,
             project_name=project.church_name or project.name,
-            photos=photos_dicts,
+            photos=all_photos_dicts,
             output_path=xlsx_path,
             mode=parsing_mode,
             count_pieces=count_pieces,
