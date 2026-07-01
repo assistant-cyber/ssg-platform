@@ -102,7 +102,7 @@ export default function ReportTab({ project, onRefresh }: Props) {
   };
 
   const pollReport = async (attempt = 0): Promise<void> => {
-    if (attempt > 60) {
+    if (attempt > 200) {
       setGenState('error');
       return;
     }
@@ -114,6 +114,14 @@ export default function ReportTab({ project, onRefresh }: Props) {
         setGenState('done');
         setIsDraftDirty(false);
         await onRefresh();
+        return;
+      }
+      // The backend writes any error from the background task into the
+      // report's narrative under _error. Surface it so the user knows
+      // why their PDF never appeared.
+      const err = (latest.narrative as { _error?: string } | null)?._error;
+      if (err) {
+        setGenState('error');
         return;
       }
     } catch {
@@ -381,7 +389,7 @@ export default function ReportTab({ project, onRefresh }: Props) {
                   className="btn-secondary w-full justify-center"
                 >
                   {genState === 'running' ? <Loader2 size={16} className="animate-spin" /> : <FileText size={16} />}
-                  {genState === 'running' ? 'Building PDF...' : 'Build PDF'}
+                  {genState === 'running' ? 'Building PDF… (this can take a couple of minutes for large projects)' : 'Build PDF'}
                 </button>
               </div>
 
@@ -728,6 +736,24 @@ export default function ReportTab({ project, onRefresh }: Props) {
               </div>
             ) : null}
           </div>
+
+          {genState === 'error' ? (
+            <div className="rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+              <p className="font-semibold">PDF build failed</p>
+              <p className="mt-1 text-xs">
+                {(report?.narrative as { _error?: string } | null)?._error
+                  ?? 'The server did not produce a PDF. Try Build PDF again, or check Railway logs.'}
+              </p>
+              <button
+                type="button"
+                onClick={handleGenerate}
+                disabled={!project.photos.length}
+                className="mt-2 inline-flex items-center gap-1 rounded-full border border-red-300 bg-white px-3 py-1 text-xs font-semibold text-red-700 hover:bg-red-50"
+              >
+                Try again
+              </button>
+            </div>
+          ) : null}
 
           <div className="flex flex-wrap gap-3">
             <button
