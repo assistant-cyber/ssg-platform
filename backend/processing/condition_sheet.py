@@ -685,47 +685,57 @@ def _build_excel(
 
     LAST_DATA_ROW = row - 1
 
-    # ── Data validation ──────────────────────────────────────────────────────
-    sev_dv = DataValidation(type="list", formula1='"0,1,2,3,4,5"',
-                            allow_blank=True, showDropDown=False)
-    sev_dv.errorTitle = "Invalid severity"
-    sev_dv.error = "Enter 0 (none) to 5 (severe)."
-    yn_dv = DataValidation(type="list", formula1='"Yes,No"',
-                           allow_blank=True, showDropDown=False)
-    elev_dv = DataValidation(
-        type="list", formula1='"North,South,East,West,NE,NW,SE,SW"',
-        allow_blank=True, showDropDown=False,
-    )
-    ws.add_data_validation(sev_dv)
-    ws.add_data_validation(yn_dv)
-    ws.add_data_validation(elev_dv)
+    # ── Data validation + conditional formatting (skipped if no data) ──────────
+    # If no photos had parseable notes, the data row range collapses
+    # (e.g. "L5:L4" with start > end) and openpyxl's Convertible descriptor
+    # raises "TypeError: expected MultiCellRange" the moment a rule or DV
+    # is registered. Skip these sections entirely when there's no data;
+    # the spreadsheet is still useful as a header-only template.
+    has_data = LAST_DATA_ROW >= DATA_START
 
-    for _summary, panel_rows_v in window_row_map:
-        yn_dv.add(f"F{_summary}"); yn_dv.add(f"G{_summary}")
-        for pr in panel_rows_v:
-            sev_dv.add(f"C{pr}"); sev_dv.add(f"D{pr}")
-            elev_dv.add(f"B{pr}")
+    if has_data:
+        sev_dv = DataValidation(type="list", formula1='"0,1,2,3,4,5"',
+                                allow_blank=True, showDropDown=False)
+        sev_dv.errorTitle = "Invalid severity"
+        sev_dv.error = "Enter 0 (none) to 5 (severe)."
+        yn_dv = DataValidation(type="list", formula1='"Yes,No"',
+                               allow_blank=True, showDropDown=False)
+        elev_dv = DataValidation(
+            type="list", formula1='"North,South,East,West,NE,NW,SE,SW"',
+            allow_blank=True, showDropDown=False,
+        )
+        ws.add_data_validation(sev_dv)
+        ws.add_data_validation(yn_dv)
+        ws.add_data_validation(elev_dv)
+
+    if has_data:
+        for _summary, panel_rows_v in window_row_map:
+            yn_dv.add(f"F{_summary}"); yn_dv.add(f"G{_summary}")
+            for pr in panel_rows_v:
+                sev_dv.add(f"C{pr}"); sev_dv.add(f"D{pr}")
+                elev_dv.add(f"B{pr}")
 
     # ── Conditional formatting ───────────────────────────────────────────────
-    for col_letter, color in [("L", GOOD_GREEN), ("M", FAIR_YELLOW), ("N", POOR_RED)]:
-        rng = f"{col_letter}{DATA_START}:{col_letter}{LAST_DATA_ROW}"
-        ws.conditional_formatting.add(
-            rng,
-            CellIsRule(
-                operator="greaterThan", formula=["0"],
-                fill=PatternFill("solid", start_color=color),
-            ),
-        )
+    if has_data:
+        for col_letter, color in [("L", GOOD_GREEN), ("M", FAIR_YELLOW), ("N", POOR_RED)]:
+            rng = f"{col_letter}{DATA_START}:{col_letter}{LAST_DATA_ROW}"
+            ws.conditional_formatting.add(
+                rng,
+                CellIsRule(
+                    operator="greaterThan", formula=["0"],
+                    fill=PatternFill("solid", start_color=color),
+                ),
+            )
 
-    cond_range = f"S{DATA_START}:S{LAST_DATA_ROW}"
-    for val, color in [("Good", GOOD_GREEN), ("Fair", FAIR_YELLOW), ("Poor", POOR_RED)]:
-        ws.conditional_formatting.add(
-            cond_range,
-            CellIsRule(
-                operator="equal", formula=[f'"{val}"'],
-                fill=PatternFill("solid", start_color=color),
-            ),
-        )
+        cond_range = f"S{DATA_START}:S{LAST_DATA_ROW}"
+        for val, color in [("Good", GOOD_GREEN), ("Fair", FAIR_YELLOW), ("Poor", POOR_RED)]:
+            ws.conditional_formatting.add(
+                cond_range,
+                CellIsRule(
+                    operator="equal", formula=[f'"{val}"'],
+                    fill=PatternFill("solid", start_color=color),
+                ),
+            )
 
     # Hide helper columns S, T
     ws.column_dimensions["S"].hidden = True
