@@ -17,16 +17,23 @@ const HOP_BY_HOP_HEADERS = new Set([
   'upgrade',
 ]);
 
-// Headers that don't make sense to forward when we've buffered the upstream
-// body. Node's fetch transparently decompresses gzip/brotli/zstd responses,
-// so the bytes in the arrayBuffer are already decoded — forwarding the
-// content-encoding header alongside them would cause the browser to fail
-// decoding and produce an empty body. content-length is recomputed by Next
-// from the arrayBuffer.
-const BUFFERED_BODY_HEADERS = new Set([
+// Headers to strip when streaming the body. The root cause of the original
+// "empty 200" bug was that Node's fetch transparently decompresses gzip /
+// brotli / zstd, so when we pass upstream.body (a ReadableStream of decoded
+// bytes) into a new Response we must NOT forward content-encoding — the
+// browser would try to gunzip already-decoded bytes and the body would
+// appear empty. content-length is also stripped so Vercel re-derives it
+// from the actual streamed bytes.
+const STREAMED_BODY_HEADERS = new Set([
   'content-encoding',
   'content-length',
 ]);
+
+// Large body threshold (bytes). Below this, buffering is cheap and avoids
+// streaming glitches. Above this, streaming keeps the function fast — a 488KB
+// project payload was taking 30–60s end-to-end through the Vercel function
+// while buffered, and ~1s when streamed.
+const STREAM_THRESHOLD_BYTES = 64 * 1024;
 
 function buildUpstreamUrl(path: string[], search: string): string {
   const normalizedBase = UPSTREAM_API.endsWith('/') ? UPSTREAM_API.slice(0, -1) : UPSTREAM_API;
@@ -102,26 +109,38 @@ async function proxy(request: NextRequest, path: string[]) {
     );
   }
 
-  // Buffer the upstream body. Two reasons we can't pass upstream.body
-  // (a ReadableStream) directly into a Response here:
-  //   1. Earlier versions stripped content-length while still forwarding a
-  //      stream, and Vercel's edge couldn't always re-derive it, producing
-  //      empty 200 responses.
-  //   2. Node's fetch transparently decompresses gzip/brotli/zstd, so the
-  //      bytes we get back are already decoded — but the upstream headers
-  //      still carry content-encoding: gzip. Forwarding that header with
-  //      decoded bytes causes the browser to fail gunzipping and the page
-  //      sees an empty body.
-  const upstreamBody = await upstream.arrayBuffer();
   const responseHeaders = new Headers(upstream.headers);
 
   for (const header of HOP_BY_HOP_HEADERS) {
     responseHeaders.delete(header);
   }
-  for (const header of BUFFERED_BODY_HEADERS) {
-    responseHeaders.delete(header);
+
+  // Decide stream vs. buffer based on body size. The dashboard's project
+  // detail endpoint returns ~488KB (726 photo metadata rows). Buffering that
+  // through the Vercel serverless function was pushing responses out to 30–60s.
+  // Streaming is the default; small bodies are buffered for the safety of
+  // known-good behaviour (error mapping, response inspection).
+  const contentLength = Number(upstream.headers.get('content-length') ?? '0');
+  const shouldStream = !upstream.body
+    ? false
+    : contentLength === 0
+      ? true // unknown size, stream to be safe
+      : contentLength > STREAM_THRESHOLD_BYTES;
+
+  if (shouldStream && upstream.body) {
+    for (const header of STREAMED_BODY_HEADERS) {
+      responseHeaders.delete(header);
+    }
+    return new Response(upstream.body, {
+      status: upstream.status,
+      statusText: upstream.statusText,
+      headers: responseHeaders,
+    });
   }
 
+  // Small-body path: buffer and forward. content-length is preserved
+  // (Next sets it from the arrayBuffer).
+  const upstreamBody = await upstream.arrayBuffer();
   return new Response(upstreamBody, {
     status: upstream.status,
     statusText: upstream.statusText,

@@ -31,3 +31,5 @@ Thumbs.db
 mobile/dist/
 mobile/android/
 mobile/ios/
+.vercel
+.env

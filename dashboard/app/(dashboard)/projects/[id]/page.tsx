@@ -1,5 +1,5 @@
 'use client';
-import { useEffect, useState } from 'react';
+import { Suspense, useEffect, useState } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import { AlertTriangle, ArrowLeft, Camera, DollarSign, FileSpreadsheet, Trash2, Users, X } from 'lucide-react';
 import api, { type ProjectDetail } from '@/lib/api';
@@ -21,6 +21,21 @@ const TABS = [
 type TabId = typeof TABS[number]['id'];
 
 export default function ProjectDetailPage() {
+  return (
+    <Suspense
+      fallback={
+        <div className="p-4 md:p-8">
+          <div className="h-8 w-48 bg-gray-200 rounded animate-pulse mb-4" />
+          <div className="h-4 w-32 bg-gray-100 rounded animate-pulse" />
+        </div>
+      }
+    >
+      <ProjectDetailPageContent />
+    </Suspense>
+  );
+}
+
+function ProjectDetailPageContent() {
   const { id } = useParams<{ id: string }>();
   const router = useRouter();
   const [project, setProject] = useState<ProjectDetail | null>(null);
@@ -53,6 +68,16 @@ export default function ProjectDetailPage() {
   };
 
   useEffect(() => { void reload(); }, [id]);
+
+  // Keep the proxy / backend warm so the first real fetch after idle doesn't
+  // hit a Vercel + Railway cold start (which can take 30–60s end-to-end and
+  // looked like a hung page). Silent HEAD every 4 minutes.
+  useEffect(() => {
+    const keepAlive = setInterval(() => {
+      fetch('/api-proxy/projects', { method: 'HEAD', cache: 'no-store' }).catch(() => {});
+    }, 4 * 60 * 1000);
+    return () => clearInterval(keepAlive);
+  }, []);
 
   const handleDeleteProject = async () => {
     if (!project || deleting) return;
@@ -89,6 +114,20 @@ export default function ProjectDetailPage() {
           <p className="mt-2 text-sm text-ssg-muted">
             {loadError ?? 'The project record could not be found.'}
           </p>
+          {loadError ? (
+            <button
+              type="button"
+              onClick={() => {
+                setProject(null);
+                setLoadError(null);
+                setLoading(true);
+                void reload();
+              }}
+              className="btn-primary mt-5"
+            >
+              Try again
+            </button>
+          ) : null}
         </div>
       </div>
     );

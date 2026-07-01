@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { Suspense, useEffect, useMemo, useRef, useState } from 'react';
 import { useParams, useSearchParams } from 'next/navigation';
 import {
   AlertCircle,
@@ -128,6 +128,27 @@ function SectionCard({
 }
 
 export default function CustomerPortalPage() {
+  return (
+    <Suspense
+      fallback={
+        <div className="min-h-screen bg-[#f4f3ef]">
+          <PortalHeader />
+          <div className="flex min-h-[calc(100vh-76px)] items-center justify-center px-6">
+            <div className="rounded-[28px] border border-black/5 bg-white px-8 py-10 text-center shadow-[0_20px_50px_rgba(23,26,31,0.06)]">
+              <Loader2 size={40} className="mx-auto animate-spin text-ssg-green" />
+              <p className="mt-4 text-lg font-semibold text-ssg-charcoal">Loading your project portal...</p>
+              <p className="mt-2 text-sm text-ssg-muted">Preparing reports, photos, and project status.</p>
+            </div>
+          </div>
+        </div>
+      }
+    >
+      <CustomerPortalPageContent />
+    </Suspense>
+  );
+}
+
+function CustomerPortalPageContent() {
   const params = useParams<{ id: string }>();
   const searchParams = useSearchParams();
   const projectId = params.id;

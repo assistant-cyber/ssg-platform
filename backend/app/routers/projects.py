@@ -5,7 +5,7 @@ from datetime import datetime
 from typing import List
 
 from fastapi import APIRouter, Depends, HTTPException, status
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, selectinload
 
 from app.database import get_db
 from app.dependencies import get_current_user, is_staff_role, require_staff
@@ -125,7 +125,20 @@ def get_project(
 
     Customers may only view their own linked project.
     """
-    project = db.query(Project).filter(Project.id == project_id).first()
+    # Eager-load photos (and each photo's condition_data / uploaded_by) in
+    # 3 small SELECTs instead of 1 + 2*N lazy queries. Projects with 700+
+    # photos were hitting 30–60s on the dashboard because of the N+1.
+    project = (
+        db.query(Project)
+        .options(
+            selectinload(Project.photos).selectinload(Photo.condition_data),
+            selectinload(Project.photos).selectinload(Photo.uploaded_by),
+            selectinload(Project.reports),
+            selectinload(Project.estimates),
+        )
+        .filter(Project.id == project_id)
+        .first()
+    )
     if not project:
         raise HTTPException(status_code=404, detail="Project not found")
 

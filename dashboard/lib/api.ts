@@ -142,15 +142,38 @@ class ApiClient {
     return token ? { Authorization: `Bearer ${token}` } : {};
   }
 
-  async request<T>(method: string, path: string, body?: unknown): Promise<T> {
-    const res = await fetch(`${BASE}${path}`, {
-      method,
-      headers: {
-        'Content-Type': 'application/json',
-        ...this.authHeaders(),
-      },
-      body: body !== undefined ? JSON.stringify(body) : undefined,
-    });
+  async request<T>(method: string, path: string, body?: unknown, options?: { timeoutMs?: number }): Promise<T> {
+    const timeoutMs = options?.timeoutMs ?? 30_000;
+
+    // AbortController-backed timeout. The dashboard fetches through the
+    // `/api-proxy` serverless route, which itself waits for the Railway
+    // backend. On the first request after idle the chain can take 30–60s
+    // (Vercel cold start + Railway wake). Without a client-side timeout the
+    // page sits in its loading state forever and there's no way to retry.
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
+
+    let res: Response;
+    try {
+      res = await fetch(`${BASE}${path}`, {
+        method,
+        headers: {
+          'Content-Type': 'application/json',
+          ...this.authHeaders(),
+        },
+        body: body !== undefined ? JSON.stringify(body) : undefined,
+        signal: controller.signal,
+        cache: 'no-store',
+      });
+    } catch (error) {
+      if (error instanceof DOMException && error.name === 'AbortError') {
+        throw new Error(`Request timed out after ${Math.round(timeoutMs / 1000)}s. The backend may be cold-starting — please retry.`);
+      }
+      throw error;
+    } finally {
+      clearTimeout(timer);
+    }
+
     if (!res.ok) {
       let detail = `HTTP ${res.status}`;
       try { const e = await res.json(); detail = e.detail ?? detail; } catch {}
