@@ -544,8 +544,19 @@ def _generate_report_task(
         db.commit()
 
     except Exception as e:
-        # Log but do not crash the background task
+        # Log and surface the error to the report record so the user can see
+        # what went wrong from the dashboard (otherwise the page polls
+        # forever with a silently-failed background task).
         print(f"[report_task] Error generating report {report_id}: {e}")
+        try:
+            failed_report = db.query(Report).filter(Report.id == report_id).first()
+            if failed_report is not None:
+                existing = dict(failed_report.narrative or {})
+                existing["_error"] = f"{type(e).__name__}: {e}"
+                failed_report.narrative = existing
+                db.commit()
+        except Exception:
+            pass
     finally:
         db.close()
 
