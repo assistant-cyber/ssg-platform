@@ -67,14 +67,79 @@ def _extract_window_parts(notes: str):
         return None, None, None
 
 
-def _make_unique_filename(filename: str, project_id: str, db: Session) -> str:
+def _increment_panel_letter(panel_letter: Optional[str]) -> str:
+    """Return the next panel letter in sequence: A->B, ..., Z->AA, AZ->BA, etc.
+
+    Mirrors the spreadsheet-column style increment used by the dashboard's
+    client-side label predictor (dashboard/lib/photoNaming.ts).
+    """
+    letters = (panel_letter or "").strip().upper()
+    if not letters or not letters.isalpha():
+        return "A"
+    chars = list(letters)
+    i = len(chars) - 1
+    while i >= 0:
+        if chars[i] != "Z":
+            chars[i] = chr(ord(chars[i]) + 1)
+            return "".join(chars)
+        chars[i] = "A"
+        i -= 1
+    return "A" + "".join(chars)
+
+
+def _auto_fill_label(
+    project_id: str,
+    db: Session,
+    exclude_photo_id: Optional[str] = None,
+    before_sort_order: Optional[int] = None,
+):
+    """Infer the next (window_number, panel_letter) for a photo with no
+    parseable label of its own, by continuing the sequence from the nearest
+    labeled photo *before it* in this project (e.g. 1A -> 1B -> 1C -> 1D).
+
+    ``before_sort_order``, when given, restricts the lookup to photos that
+    come earlier in the project's sequence than this position - this matters
+    when re-inferring a label for a photo that already sits in the middle of
+    the sequence (e.g. its notes were edited/blanked), so it inherits from
+    its actual predecessor rather than from whatever was uploaded last.
+    Newly uploaded photos are always appended at the end, so this can be
+    left as None there.
+
+    Returns (None, None) if no prior labeled photo exists to infer from.
+    """
+    query = db.query(Photo).filter(
+        Photo.project_id == project_id,
+        Photo.window_number.isnot(None),
+    )
+    if exclude_photo_id:
+        query = query.filter(Photo.id != exclude_photo_id)
+    if before_sort_order is not None:
+        query = query.filter(Photo.sort_order < before_sort_order)
+
+    last_labeled = query.order_by(
+        Photo.sort_order.desc(), Photo.uploaded_at.desc()
+    ).first()
+
+    if not last_labeled or not last_labeled.window_number:
+        return None, None
+
+    next_letter = _increment_panel_letter(last_labeled.panel_letter)
+    return last_labeled.window_number, next_letter
+
+
+def _make_unique_filename(
+    filename: str,
+    project_id: str,
+    db: Session,
+    exclude_photo_id: Optional[str] = None,
+) -> str:
     """Append a counter if filename already exists in this project."""
     stem = Path(filename).stem
     ext = Path(filename).suffix
-    existing_names = {
-        row[0]
-        for row in db.query(Photo.filename).filter(Photo.project_id == project_id).all()
-    }
+    query = db.query(Photo.filename).filter(Photo.project_id == project_id)
+    if exclude_photo_id:
+        query = query.filter(Photo.id != exclude_photo_id)
+    existing_names = {row[0] for row in query.all()}
     if filename not in existing_names:
         return filename
     counter = 2
@@ -86,16 +151,20 @@ def _make_unique_filename(filename: str, project_id: str, db: Session) -> str:
 
 
 def _photo_download_name(photo: Photo, used_names: set[str]) -> str:
-    preferred_name = (photo.filename or "").strip()
+    """Filename used inside the downloaded zip.
 
-    if preferred_name:
-        base_name = Path(preferred_name).name
+    This is always derived strictly from the window number / panel letter
+    label (e.g. "1A.jpg", "8C.jpg") - never from the note text or the
+    original camera filename - so downloaded files are named in the same
+    1a/1b/1c/... sequence used to identify the photos on site. Falls back to
+    a plain sequential name only when a photo has no label at all.
+    """
+    extension = Path(photo.original_filename or photo.storage_url).suffix or ".jpg"
+
+    if photo.window_number:
+        base_name = f"{photo.window_number}{(photo.panel_letter or '').upper()}{extension}"
     else:
-        extension = Path(photo.original_filename or photo.storage_url).suffix or ".jpg"
-        if photo.window_number:
-            base_name = f"{photo.window_number}{(photo.panel_letter or '').upper()}{extension}"
-        else:
-            base_name = f"photo_{photo.sort_order + 1:03d}{extension}"
+        base_name = f"photo_{photo.sort_order + 1:03d}{extension}"
 
     stem = Path(base_name).stem or "photo"
     extension = Path(base_name).suffix or ".jpg"
@@ -183,22 +252,31 @@ async def upload_photo(
     except Exception:
         normalized_notes = notes.strip() if notes else ""
 
+    # Resolve this photo's window number / panel letter once, up front, so the
+    # filename and the stored label fields are always derived from the same
+    # source of truth.
+    win_num, panel_letter, elevation = _extract_window_parts(notes)
+    if not win_num:
+        # No parseable label in this photo's own notes (e.g. left blank) -
+        # continue the sequence from the last labeled photo in this project
+        # (1A -> 1B -> 1C -> 1D ...) instead of leaving it unlabeled.
+        auto_win_num, auto_panel_letter = _auto_fill_label(project_id, db)
+        if auto_win_num:
+            win_num, panel_letter = auto_win_num, auto_panel_letter
+
     requested_filename = Path(filename_override).name.strip() if filename_override else ""
 
     if requested_filename:
         auto_filename = requested_filename
     else:
-        # Auto-generate filename from notes
-        try:
-            from processing.photo_naming import extract_label_parts
-            win_num, panel_letter = extract_label_parts(normalized_notes)
-            if win_num:
-                label = f"{win_num}{panel_letter or ''}".strip()
-                ext = Path(original_filename).suffix or ".jpg"
-                auto_filename = f"{label}{ext}"
-            else:
-                auto_filename = original_filename
-        except Exception:
+        # Auto-generate filename from the resolved label (never from raw
+        # notes text - the filename should be exactly "1A.jpg", not
+        # "1A-broken-lead.jpg").
+        ext = Path(original_filename).suffix or ".jpg"
+        if win_num:
+            label = f"{win_num}{panel_letter or ''}".strip()
+            auto_filename = f"{label}{ext}"
+        else:
             auto_filename = original_filename
 
     # Generate photo_id early so storage layer can use it for key construction
@@ -245,8 +323,6 @@ async def upload_photo(
         .first()
     )
     sort_order = (max_sort[0] + 1) if max_sort and max_sort[0] is not None else 0
-
-    win_num, panel_letter, elevation = _extract_window_parts(notes)
 
     photo = Photo(
         id=photo_id,
@@ -374,9 +450,32 @@ def update_photo(
             new_notes = body.notes or ""
         photo.notes = new_notes or None
         win_num, panel_letter, elevation = _extract_window_parts(new_notes)
+        if not win_num:
+            # Notes were cleared or don't contain a parseable label - keep
+            # this photo in sequence rather than dropping its label.
+            auto_win_num, auto_panel_letter = _auto_fill_label(
+                photo.project_id,
+                db,
+                exclude_photo_id=photo.id,
+                before_sort_order=photo.sort_order,
+            )
+            if auto_win_num:
+                win_num, panel_letter = auto_win_num, auto_panel_letter
         photo.window_number = win_num
         photo.panel_letter = panel_letter
         photo.elevation = elevation
+
+        # Keep the stored filename (used for downloads) in sync with the
+        # resolved label - it should always be exactly "1A.jpg", never the
+        # note text.
+        if win_num:
+            ext = Path(photo.filename or photo.original_filename or "photo.jpg").suffix or ".jpg"
+            label = f"{win_num}{panel_letter or ''}".strip()
+            candidate_filename = _make_unique_filename(
+                f"{label}{ext}", photo.project_id, db, exclude_photo_id=photo.id
+            )
+            if candidate_filename != photo.filename:
+                photo.filename = candidate_filename
 
         # Delete existing condition data
         existing = (
