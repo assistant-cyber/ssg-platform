@@ -93,6 +93,16 @@ def _photos_to_dicts(photos, cache_dir: Path):
             "window_number": p.window_number or "",
             "panel_letter": p.panel_letter or "",
             "elevation": p.elevation or "",
+            "is_elevation": bool(getattr(p, "is_elevation", False)),
+            "pins": [
+                {
+                    "x_pct": pin.x_pct,
+                    "y_pct": pin.y_pct,
+                    "label": pin.label,
+                    "color": pin.color,
+                }
+                for pin in sorted(getattr(p, "pins", None) or [], key=lambda pin: pin.sort_order)
+            ],
         })
     return result
 
@@ -569,19 +579,46 @@ def _generate_report_task(
         # Overview/Valuation stat cards + Good/Fair/Poor and Frame Work tables -
         # computed from the same photo notes the condition sheet just parsed,
         # so the PDF's numbers always agree with the spreadsheet's.
-        from processing.condition_sheet import compute_overview_stats_from_photos
+        from processing.condition_sheet import compute_overview_stats_from_photos, build_condition_schedule_rows_from_photos
         overview_stats = compute_overview_stats_from_photos(all_photos_dicts, mode=parsing_mode)
+
+        # Appendix 4's condition-schedule table used to come straight from
+        # the dashboard's client-side derivation (deriveConditionScheduleRows
+        # in reportDraft.ts), which reads each photo's persisted ConditionData
+        # - and that's only ever populated by the compact-shorthand parser
+        # (see photos.py::_parse_condition_from_notes), never AI/hybrid. That
+        # meant the appendix table could show stale/zeroed severities for
+        # projects with dictated, natural-language notes even after the
+        # Overview page was fixed to use hybrid parsing. Recomputing the rows
+        # here - straight from the same fresh hybrid-parsed panels used for
+        # overview_stats - keeps the appendix table, the Overview page, and
+        # the xlsx all in agreement. This overrides whatever rows the
+        # frontend put in narrative._meta for the PDF only; the stored draft
+        # narrative in the DB is left untouched.
+        condition_schedule_rows = build_condition_schedule_rows_from_photos(all_photos_dicts, mode=parsing_mode)
+        narrative_for_pdf = dict(narrative) if isinstance(narrative, dict) else {}
+        meta_for_pdf = dict(narrative_for_pdf.get("_meta") or {})
+        meta_for_pdf["condition_schedule_rows"] = condition_schedule_rows
+        narrative_for_pdf["_meta"] = meta_for_pdf
+
+        # Elevation reference photos (with their placed pins) always render
+        # their full-page appendix pages regardless of whether they were
+        # individually picked for any narrative section - they already come
+        # from all_photos_dicts, which is materialized in full for the
+        # condition sheet/overview stats anyway, so this adds no extra work.
+        elevation_photos = [p for p in all_photos_dicts if p.get("is_elevation")]
 
         from processing.report_generator import generate_report_pdf
         generate_report_pdf(
             project=project_dict,
-            narrative=narrative,
+            narrative=narrative_for_pdf,
             photos=photos_dicts,
             spreadsheet_path=xlsx_path if os.path.exists(xlsx_path) else None,
             output_path=pdf_path,
             overview_stats=overview_stats,
             replacement_value=project.replacement_value,
             antique_value=project.antique_value,
+            elevation_photos=elevation_photos,
         )
 
         # Upload PDF

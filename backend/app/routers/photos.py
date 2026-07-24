@@ -13,8 +13,11 @@ from sqlalchemy.orm import Session
 
 from app.database import get_db
 from app.dependencies import get_current_user, require_staff
-from app.models import ConditionData, Photo, Project, User, new_uuid
-from app.schemas import PhotoDownloadRequest, PhotoOut, PhotoUpdate
+from app.models import ConditionData, Photo, PhotoPin, Project, User, new_uuid
+from app.schemas import (
+    PhotoDownloadRequest, PhotoOut, PhotoUpdate,
+    PhotoPinCreate, PhotoPinOut, PhotoPinUpdate,
+)
 from app.storage import storage
 
 router = APIRouter(tags=["photos"])
@@ -529,4 +532,69 @@ def delete_photo(
 
     # Cascade deletes ConditionData via ORM relationship
     db.delete(photo)
+    db.commit()
+
+
+# ─── Photo pins (elevation reference photo annotations) ───────────────────────
+
+@router.post("/photos/{photo_id}/pins", response_model=PhotoPinOut, status_code=status.HTTP_201_CREATED)
+def create_photo_pin(
+    photo_id: str,
+    body: PhotoPinCreate,
+    current_user: User = Depends(require_staff),
+    db: Session = Depends(get_db),
+):
+    """Place a new numbered pin on an elevation/exterior photo."""
+    photo = db.query(Photo).filter(Photo.id == photo_id).first()
+    if not photo:
+        raise HTTPException(status_code=404, detail="Photo not found")
+
+    pin = PhotoPin(
+        id=new_uuid(),
+        photo_id=photo_id,
+        project_id=photo.project_id,
+        x_pct=body.x_pct,
+        y_pct=body.y_pct,
+        label=body.label,
+        color=body.color,
+        sort_order=body.sort_order,
+    )
+    db.add(pin)
+    db.commit()
+    db.refresh(pin)
+    return PhotoPinOut.model_validate(pin)
+
+
+@router.patch("/photo-pins/{pin_id}", response_model=PhotoPinOut)
+def update_photo_pin(
+    pin_id: str,
+    body: PhotoPinUpdate,
+    current_user: User = Depends(require_staff),
+    db: Session = Depends(get_db),
+):
+    """Reposition, relabel, recolor, or reorder an existing pin."""
+    pin = db.query(PhotoPin).filter(PhotoPin.id == pin_id).first()
+    if not pin:
+        raise HTTPException(status_code=404, detail="Pin not found")
+
+    update_data = body.model_dump(exclude_unset=True)
+    for field, value in update_data.items():
+        setattr(pin, field, value)
+
+    db.commit()
+    db.refresh(pin)
+    return PhotoPinOut.model_validate(pin)
+
+
+@router.delete("/photo-pins/{pin_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_photo_pin(
+    pin_id: str,
+    current_user: User = Depends(require_staff),
+    db: Session = Depends(get_db),
+):
+    """Remove a pin."""
+    pin = db.query(PhotoPin).filter(PhotoPin.id == pin_id).first()
+    if not pin:
+        raise HTTPException(status_code=404, detail="Pin not found")
+    db.delete(pin)
     db.commit()
