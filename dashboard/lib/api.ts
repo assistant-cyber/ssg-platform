@@ -297,7 +297,7 @@ class ApiClient {
   async generateReport(
     projectId: string,
     narrative?: unknown,
-    mode = 'shorthand',
+    mode = 'hybrid',
     publishToPortal = true,
   ): Promise<Report> {
     return this.request('POST', `/projects/${projectId}/generate-report`, {
