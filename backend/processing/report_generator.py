@@ -529,12 +529,212 @@ def build_cover_page(story, church_name, church_address, assess_date, cover_imag
     story.append(PageBreak())
 
 
-def build_section(story, title, subtitle, text, styles, content_width, section_photos=None):
+def _format_usd(value: Optional[float]) -> str:
+    if value is None:
+        return "Not yet provided"
+    try:
+        return f"${value:,.0f}"
+    except (TypeError, ValueError):
+        return "Not yet provided"
+
+
+def _stat_card_table(cards: List[tuple], content_width: float) -> Table:
+    """A row of equal-width stat cards, each rendered as a big number over a
+    small caption (e.g. "68" / "Total Windows")."""
+    value_style = ParagraphStyle(
+        "StatValue", fontName=DISPLAY_BOLD, fontSize=19, textColor=SCOTTISH_GREEN,
+        alignment=TA_CENTER, leading=22,
+    )
+    label_style = ParagraphStyle(
+        "StatLabel", fontName=BODY_FONT, fontSize=7.6, textColor=WARM_GRAY,
+        alignment=TA_CENTER, leading=9.5,
+    )
+    row = [
+        [Paragraph(str(value), value_style), Paragraph(label, label_style)]
+        for value, label in cards
+    ]
+    # Transpose so each card is one table cell containing a 2-row mini-table.
+    cells = []
+    for value_p, label_p in row:
+        mini = Table([[value_p], [label_p]], colWidths=[content_width / len(cards) - 8])
+        mini.setStyle(TableStyle([
+            ("TOPPADDING", (0, 0), (-1, -1), 2),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), 2),
+        ]))
+        cells.append(mini)
+
+    table = Table([cells], colWidths=[content_width / len(cards)] * len(cards))
+    table.setStyle(TableStyle([
+        ("BACKGROUND", (0, 0), (-1, -1), BODY_TINT),
+        ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+        ("TOPPADDING", (0, 0), (-1, -1), 10),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 10),
+        ("LINEAFTER", (0, 0), (-2, 0), 0.75, white),
+        ("BOX", (0, 0), (-1, -1), 0.75, LIGHT_GRAY),
+    ]))
+    return table
+
+
+def _valuation_card_table(replacement_value: Optional[float], antique_value: Optional[float], content_width: float) -> Table:
+    label_style = ParagraphStyle(
+        "ValuationLabel", fontName=BODY_BOLD, fontSize=9, textColor=CHARCOAL,
+        alignment=TA_CENTER, leading=11,
+    )
+    sub_style = ParagraphStyle(
+        "ValuationSub", fontName=BODY_ITALIC, fontSize=7.6, textColor=WARM_GRAY,
+        alignment=TA_CENTER, leading=9.5,
+    )
+    value_style = ParagraphStyle(
+        "ValuationValue", fontName=DISPLAY_BOLD, fontSize=22, textColor=SCOTTISH_GREEN,
+        alignment=TA_CENTER, leading=26,
+    )
+    missing_style = ParagraphStyle(
+        "ValuationMissing", fontName=BODY_ITALIC, fontSize=11, textColor=MID_GRAY,
+        alignment=TA_CENTER, leading=14,
+    )
+
+    def _cell(value: Optional[float], label: str, sub: str) -> Table:
+        value_p = Paragraph(_format_usd(value), value_style if value is not None else missing_style)
+        mini = Table([
+            [Paragraph(label, label_style)],
+            [value_p],
+            [Paragraph(sub, sub_style)],
+        ])
+        mini.setStyle(TableStyle([("TOPPADDING", (0, 0), (-1, -1), 1), ("BOTTOMPADDING", (0, 0), (-1, -1), 1)]))
+        return mini
+
+    left = _cell(replacement_value, "Replacement Value", "Insurance / Replication")
+    right = _cell(antique_value, "Antique Value", "When in Good Condition")
+
+    table = Table([[left, right]], colWidths=[content_width / 2, content_width / 2])
+    table.setStyle(TableStyle([
+        ("BACKGROUND", (0, 0), (-1, -1), BODY_TINT),
+        ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+        ("TOPPADDING", (0, 0), (-1, -1), 12),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 12),
+        ("LINEAFTER", (0, 0), (0, 0), 0.75, white),
+        ("BOX", (0, 0), (-1, -1), 0.75, LIGHT_GRAY),
+    ]))
+    return table
+
+
+def _tiered_breakdown_table(
+    row_label: str,
+    header_labels: tuple,
+    header_colors: tuple,
+    tint_colors: tuple,
+    rows: List[tuple],
+    content_width: float,
+) -> Table:
+    """Shared builder for the Condition Breakdown / Exterior-Frame-Work tables:
+    a label column plus N colored tier columns (e.g. Good/Fair/Poor)."""
+    header_style = ParagraphStyle(
+        "TierHeader", fontName=BODY_BOLD, fontSize=9, textColor=white, alignment=TA_CENTER, leading=11,
+    )
+    corner_style = ParagraphStyle(
+        "TierCorner", fontName=BODY_BOLD, fontSize=9, textColor=white, alignment=TA_LEFT, leading=11,
+    )
+    label_style = ParagraphStyle(
+        "TierRowLabel", fontName=BODY_BOLD, fontSize=8.5, textColor=CHARCOAL, alignment=TA_LEFT, leading=11,
+    )
+    value_style = ParagraphStyle(
+        "TierValue", fontName=BODY_FONT, fontSize=9, textColor=CHARCOAL, alignment=TA_CENTER, leading=11,
+    )
+
+    header_row = [Paragraph(row_label, corner_style)] + [
+        Paragraph(label, header_style) for label in header_labels
+    ]
+    data = [header_row]
+    for label, *values in rows:
+        data.append([Paragraph(label, label_style)] + [
+            Paragraph(f"{v:,}", value_style) for v in values
+        ])
+
+    n_cols = len(header_labels) + 1
+    col_widths = [content_width * 0.34] + [content_width * 0.66 / len(header_labels)] * len(header_labels)
+
+    style_cmds = [
+        ("BACKGROUND", (0, 0), (0, 0), CHARCOAL),
+        ("BOX", (0, 0), (-1, -1), 0.75, LIGHT_GRAY),
+        ("INNERGRID", (0, 0), (-1, -1), 0.5, LIGHT_GRAY),
+        ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+        ("TOPPADDING", (0, 0), (-1, -1), 6),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 6),
+        ("LEFTPADDING", (0, 0), (-1, -1), 8),
+    ]
+    for i, color in enumerate(header_colors, start=1):
+        style_cmds.append(("BACKGROUND", (i, 0), (i, 0), color))
+    for row_idx in range(1, len(data)):
+        style_cmds.append(("BACKGROUND", (0, row_idx), (0, row_idx), PALE_ROW))
+        for i, tint in enumerate(tint_colors, start=1):
+            style_cmds.append(("BACKGROUND", (i, row_idx), (i, row_idx), tint))
+
+    table = Table(data, colWidths=col_widths)
+    table.setStyle(TableStyle(style_cmds))
+    return table
+
+
+def build_overview_stats_block(story, stats: Dict[str, Any], replacement_value: Optional[float], antique_value: Optional[float], content_width: float):
+    """The data-driven part of the Overview & Valuation page: stat cards,
+    valuation figures, and the Good/Fair/Poor + Frame Work breakdown tables.
+    Rendered above the narrative prose so the page leads with hard numbers,
+    matching the target assessment-report template."""
+    cb = stats.get("condition_breakdown", {})
+    fw = stats.get("frame_work", {})
+
+    cards = [
+        (f'{stats.get("total_windows", 0):,}', "Total<br/>Windows"),
+        (f'{stats.get("total_panels_logged", 0):,}', "Total Panels<br/>Logged"),
+        (f'{stats.get("total_pieces", 0):,}', "Total<br/>Pieces"),
+        (f'{stats.get("total_overall_sqft", 0):,}', "Overall<br/>SqFt"),
+        (f'{stats.get("total_panel_sqft", 0):,}', "Panel<br/>SqFt"),
+    ]
+    story.append(_stat_card_table(cards, content_width))
+    story.append(Spacer(1, 10))
+    story.append(_valuation_card_table(replacement_value, antique_value, content_width))
+    story.append(Spacer(1, 14))
+
+    good = cb.get("Good", {}); fair = cb.get("Fair", {}); poor = cb.get("Poor", {})
+    story.append(_tiered_breakdown_table(
+        "Condition Breakdown",
+        ("Good", "Fair", "Poor"),
+        (GOOD_GREEN, AMBER, ALERT_RED),
+        (BODY_TINT, LIGHT_YELLOW, LIGHT_RED),
+        [
+            ("# Panels", good.get("panels", 0), fair.get("panels", 0), poor.get("panels", 0)),
+            ("Total SqFt", good.get("sqft", 0), fair.get("sqft", 0), poor.get("sqft", 0)),
+            ("# Pieces", good.get("pieces", 0), fair.get("pieces", 0), poor.get("pieces", 0)),
+            ("# Breaks", good.get("breaks", 0), fair.get("breaks", 0), poor.get("breaks", 0)),
+        ],
+        content_width,
+    ))
+    story.append(Spacer(1, 10))
+
+    frame_damage = fw.get("frame_damage", {}); paint_caulk = fw.get("paint_caulk", {})
+    story.append(_tiered_breakdown_table(
+        "Exterior / Frame Work",
+        ("Frame Damage", "Paint / Caulk"),
+        (AMBER, AMBER),
+        (LIGHT_YELLOW, LIGHT_YELLOW),
+        [
+            ("# Windows", frame_damage.get("windows", 0), paint_caulk.get("windows", 0)),
+            ("Total SqFt", frame_damage.get("sqft", 0), paint_caulk.get("sqft", 0)),
+        ],
+        content_width,
+    ))
+    story.append(Spacer(1, 18))
+
+
+def build_section(story, title, subtitle, text, styles, content_width, section_photos=None, pre_callout_content=None):
     story.append(Paragraph(sanitize_inline_text(title), styles["SectionTitle"]))
     if subtitle:
         story.append(Paragraph(sanitize_inline_text(subtitle), styles["SectionSubtitle"]))
     story.append(TaperedRule(content_width))
     story.append(Spacer(1, 24))
+
+    if pre_callout_content:
+        for flowable in pre_callout_content:
+            story.append(flowable)
 
     prose, numbered = split_numbered_items(text)
     parts = [re.sub(r"\n(?!\d)", " ", p) for p in prose]
@@ -875,6 +1075,9 @@ def generate_report_pdf(
     photos: List[Dict],
     spreadsheet_path: Optional[str],
     output_path: str,
+    overview_stats: Optional[Dict[str, Any]] = None,
+    replacement_value: Optional[float] = None,
+    antique_value: Optional[float] = None,
 ) -> str:
     church_name = project.get("church_name") or project.get("name", "Church")
     assess_date = project.get("assess_date", "")
@@ -929,8 +1132,17 @@ def generate_report_pdf(
     ])
 
     story: List[Any] = []
-    build_cover_page(story, church_name, church_address, assess_date, cover_image, content_width)
+    # NextPageTemplate only affects the page AFTER the one where it's
+    # encountered - it must be queued before build_cover_page's own trailing
+    # PageBreak fires, otherwise the switch to "content" doesn't land until
+    # one page too late and the Overview page renders with the cover page's
+    # header/footer chrome instead of the correct church-name/date masthead.
     story.append(NextPageTemplate("content"))
+    build_cover_page(story, church_name, church_address, assess_date, cover_image, content_width)
+
+    overview_pre_content: List[Any] = []
+    if overview_stats:
+        build_overview_stats_block(overview_pre_content, overview_stats, replacement_value, antique_value, content_width)
 
     build_section(
         story,
@@ -940,6 +1152,7 @@ def generate_report_pdf(
         styles,
         content_width,
         section_photos=resolve_section_photos("overview", photos[:2]),
+        pre_callout_content=overview_pre_content,
     )
     build_section(
         story,

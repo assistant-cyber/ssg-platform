@@ -290,6 +290,238 @@ def select_parser(mode: str):
         raise ValueError(f"Unknown parsing mode: {mode}")
 
 
+# ─── Shared parsing / grouping helpers ────────────────────────────────────────
+#
+# These are used both by the xlsx builder below AND by the PDF report's
+# "Overview and Valuation" stat cards (report_generator.py), so the two
+# outputs can never drift apart / disagree on totals.
+
+def _parse_photos_to_panels(photos: List[Dict], mode: str = "shorthand") -> List["PanelData"]:
+    """Parse a project's photo notes into PanelData rows.
+
+    Mirrors the parsing loop in generate_condition_sheet_from_db (minus piece
+    counting and progress logging, which are xlsx-specific extras).
+    """
+    parser_fn = select_parser(mode)
+    panels: List[PanelData] = []
+
+    for photo in photos:
+        notes = (photo.get("notes") or "").strip()
+
+        if not notes or not _RE_WINDOW_ID.match(notes):
+            win = photo.get("window_number", "")
+            pan = photo.get("panel_letter", "")
+            if win:
+                notes = f"{win}{pan or ''} {notes}".strip()
+            else:
+                continue
+
+        if not _RE_WINDOW_ID.match(notes):
+            continue
+
+        try:
+            pd = parser_fn(notes)
+            if pd:
+                if not pd.elevation and photo.get("elevation"):
+                    pd.elevation = photo["elevation"]
+                panels.append(pd)
+        except Exception:
+            continue
+
+    return panels
+
+
+def _group_panels_by_window(panels: List["PanelData"]) -> Tuple[Dict[str, Dict], List[str]]:
+    """Group parsed panels by window number, merging duplicate photos of the
+    same panel/window (same logic used by the xlsx builder's data rows).
+
+    Returns (windows, sorted_windows) where windows[wn] = {"overall": PanelData|None,
+    "panels": [PanelData, ...]} and sorted_windows is the window numbers in
+    numeric order (non-numeric window numbers sort last).
+    """
+    windows: Dict[str, Dict] = {}
+    for pd in panels:
+        wn = pd.window_num
+        if wn not in windows:
+            windows[wn] = {"overall": None, "panels": []}
+        if pd.is_overall_only:
+            existing = windows[wn]["overall"]
+            if existing is None:
+                windows[wn]["overall"] = pd
+            else:
+                if pd.overall_w and not existing.overall_w:
+                    existing.overall_w = pd.overall_w
+                if pd.overall_h and not existing.overall_h:
+                    existing.overall_h = pd.overall_h
+                if pd.elevation and not existing.elevation:
+                    existing.elevation = pd.elevation
+        else:
+            existing_panel = next(
+                (p for p in windows[wn]["panels"] if p.panel_letter == pd.panel_letter),
+                None,
+            )
+            if existing_panel and pd.panel_letter:
+                if pd.warping is not None and existing_panel.warping is None:
+                    existing_panel.warping = pd.warping
+                if pd.lead_det is not None and existing_panel.lead_det is None:
+                    existing_panel.lead_det = pd.lead_det
+                if pd.breaks is not None and existing_panel.breaks is None:
+                    existing_panel.breaks = pd.breaks
+                if pd.wood_rot is not None and existing_panel.wood_rot is None:
+                    existing_panel.wood_rot = pd.wood_rot
+                if pd.paint_fail is not None and existing_panel.paint_fail is None:
+                    existing_panel.paint_fail = pd.paint_fail
+                if pd.pieces is not None and existing_panel.pieces is None:
+                    existing_panel.pieces = pd.pieces
+                if pd.panel_w and not existing_panel.panel_w:
+                    existing_panel.panel_w = pd.panel_w
+                if pd.panel_h and not existing_panel.panel_h:
+                    existing_panel.panel_h = pd.panel_h
+            else:
+                windows[wn]["panels"].append(pd)
+
+    sorted_windows = sorted(windows.keys(), key=lambda x: int(x) if x.isdigit() else 999)
+    for wn in sorted_windows:
+        windows[wn]["panels"].sort(key=lambda p: p.panel_letter or "Z")
+
+    return windows, sorted_windows
+
+
+def _panel_condition(pd: "PanelData") -> Optional[str]:
+    """Poor if warping or lead deterioration hits 3+, Fair at 2, Good otherwise
+    - same rubric as the xlsx's hidden _Cond formula. Returns None if neither
+    warping nor lead_det was recorded (nothing to grade)."""
+    values = [v for v in (pd.warping, pd.lead_det) if isinstance(v, (int, float))]
+    if not values:
+        return None
+    worst = max(values)
+    if worst >= 3:
+        return "Poor"
+    if worst == 2:
+        return "Fair"
+    return "Good"
+
+
+def _window_overall_sqft(win_data: Dict) -> int:
+    overall = win_data["overall"]
+    ow = oh = None
+    if overall:
+        ow, oh = overall.overall_w, overall.overall_h
+    if not ow and win_data["panels"]:
+        for pp in win_data["panels"]:
+            if pp.overall_w and pp.overall_h:
+                ow, oh = pp.overall_w, pp.overall_h
+                break
+    if ow and oh:
+        return math.ceil(ow * oh / 144)
+    return 0
+
+
+def compute_overview_stats(panels: List["PanelData"]) -> Dict:
+    """Compute the "Overview and Valuation" page numbers: totals, condition-tier
+    breakdown (Good/Fair/Poor x panels/sqft/pieces/breaks), and exterior/frame
+    work (frame damage + paint/caulk) x (# windows/sqft).
+
+    Uses the exact same window/panel grouping and Good/Fair/Poor rubric as the
+    xlsx condition sheet, so the PDF and the spreadsheet always agree.
+    """
+    windows, sorted_windows = _group_panels_by_window(panels)
+
+    tiers = ("Good", "Fair", "Poor")
+    tier_panels = {t: 0 for t in tiers}
+    tier_sqft = {t: 0 for t in tiers}
+    tier_pieces = {t: 0 for t in tiers}
+    tier_breaks = {t: 0 for t in tiers}
+
+    total_windows = 0
+    total_panels_logged = 0
+    total_pieces = 0
+    total_panel_sqft = 0
+    total_overall_sqft = 0
+    frame_damage_windows = 0
+    frame_damage_sqft = 0
+    paint_caulk_windows = 0
+    paint_caulk_sqft = 0
+
+    for wn in sorted_windows:
+        win_data = windows[wn]
+        all_panels = win_data["panels"]
+        overall = win_data["overall"]
+
+        window_has_graded_panel = False
+        for pd in all_panels:
+            if pd.pieces:
+                total_pieces += pd.pieces
+
+            cond = _panel_condition(pd)
+            if not cond:
+                continue
+
+            window_has_graded_panel = True
+            total_panels_logged += 1
+            tier_panels[cond] += 1
+
+            if pd.panel_w and pd.panel_h:
+                sqft = math.ceil(pd.panel_w * pd.panel_h / 144)
+                tier_sqft[cond] += sqft
+                total_panel_sqft += sqft
+            if pd.pieces:
+                tier_pieces[cond] += pd.pieces
+            if pd.breaks:
+                tier_breaks[cond] += pd.breaks
+
+        if window_has_graded_panel:
+            total_windows += 1
+
+        window_sqft = _window_overall_sqft(win_data)
+        total_overall_sqft += window_sqft
+
+        has_rot = any(p.wood_rot for p in all_panels if p.wood_rot is not None)
+        has_paint = any(p.paint_fail for p in all_panels if p.paint_fail is not None)
+        if overall:
+            if overall.wood_rot:
+                has_rot = True
+            if overall.paint_fail:
+                has_paint = True
+
+        if has_rot:
+            frame_damage_windows += 1
+            frame_damage_sqft += window_sqft
+        if has_paint:
+            paint_caulk_windows += 1
+            paint_caulk_sqft += window_sqft
+
+    return {
+        "total_windows": total_windows,
+        "total_panels_logged": total_panels_logged,
+        "total_pieces": total_pieces,
+        "total_panel_sqft": total_panel_sqft,
+        "total_overall_sqft": total_overall_sqft,
+        "condition_breakdown": {
+            tier: {
+                "panels": tier_panels[tier],
+                "sqft": tier_sqft[tier],
+                "pieces": tier_pieces[tier],
+                "breaks": tier_breaks[tier],
+            }
+            for tier in tiers
+        },
+        "frame_work": {
+            "frame_damage": {"windows": frame_damage_windows, "sqft": frame_damage_sqft},
+            "paint_caulk": {"windows": paint_caulk_windows, "sqft": paint_caulk_sqft},
+        },
+    }
+
+
+def compute_overview_stats_from_photos(photos: List[Dict], mode: str = "shorthand") -> Dict:
+    """Convenience wrapper: parse a project's photo notes, then compute the
+    Overview/Valuation stats in one call. `photos` uses the same dict shape as
+    generate_condition_sheet_from_db (keys: notes, window_number, panel_letter,
+    elevation, ...)."""
+    panels = _parse_photos_to_panels(photos, mode=mode)
+    return compute_overview_stats(panels)
+
+
 # ─── OpenCV piece counter ─────────────────────────────────────────────────────
 
 def _count_pieces_opencv(image_bytes: bytes) -> Optional[Dict]:
@@ -390,51 +622,8 @@ def _build_excel(
     DATA_START = 5
 
     # ── Merge / group panel data ────────────────────────────────────────────
-    windows: Dict[str, Dict] = {}
-    for pd in panels:
-        wn = pd.window_num
-        if wn not in windows:
-            windows[wn] = {"overall": None, "panels": []}
-        if pd.is_overall_only:
-            existing = windows[wn]["overall"]
-            if existing is None:
-                windows[wn]["overall"] = pd
-            else:
-                if pd.overall_w and not existing.overall_w:
-                    existing.overall_w = pd.overall_w
-                if pd.overall_h and not existing.overall_h:
-                    existing.overall_h = pd.overall_h
-                if pd.elevation and not existing.elevation:
-                    existing.elevation = pd.elevation
-        else:
-            existing_panel = next(
-                (p for p in windows[wn]["panels"] if p.panel_letter == pd.panel_letter),
-                None,
-            )
-            if existing_panel and pd.panel_letter:
-                # Merge: keep whichever field has data
-                if pd.warping is not None and existing_panel.warping is None:
-                    existing_panel.warping = pd.warping
-                if pd.lead_det is not None and existing_panel.lead_det is None:
-                    existing_panel.lead_det = pd.lead_det
-                if pd.breaks is not None and existing_panel.breaks is None:
-                    existing_panel.breaks = pd.breaks
-                if pd.wood_rot is not None and existing_panel.wood_rot is None:
-                    existing_panel.wood_rot = pd.wood_rot
-                if pd.paint_fail is not None and existing_panel.paint_fail is None:
-                    existing_panel.paint_fail = pd.paint_fail
-                if pd.pieces is not None and existing_panel.pieces is None:
-                    existing_panel.pieces = pd.pieces
-                if pd.panel_w and not existing_panel.panel_w:
-                    existing_panel.panel_w = pd.panel_w
-                if pd.panel_h and not existing_panel.panel_h:
-                    existing_panel.panel_h = pd.panel_h
-            else:
-                windows[wn]["panels"].append(pd)
-
-    sorted_windows = sorted(windows.keys(), key=lambda x: int(x) if x.isdigit() else 999)
-    for wn in sorted_windows:
-        windows[wn]["panels"].sort(key=lambda p: p.panel_letter or "Z")
+    # (shared with the PDF's Overview/Valuation stats - see _group_panels_by_window)
+    windows, sorted_windows = _group_panels_by_window(panels)
 
     # Build window_panel_map
     window_panel_map: Dict[str, List[str]] = {}
