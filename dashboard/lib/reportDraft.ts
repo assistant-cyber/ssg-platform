@@ -1,6 +1,6 @@
 import type { Photo, ProjectDetail } from '@/lib/api';
 
-export const DEFAULT_CONDITION_SCHEDULE_TITLE = 'Appendix 4: Window Condition Schedule';
+export const DEFAULT_CONDITION_SCHEDULE_TITLE = 'Appendix 5: Window Condition Schedule';
 export const DEFAULT_CONDITION_SCHEDULE_INTRO = 'Per-window and per-panel assessment details. Red indicates critical condition, yellow indicates moderate, green indicates good condition.';
 
 export const REPORT_SECTIONS = [

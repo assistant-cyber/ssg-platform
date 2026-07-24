@@ -35,6 +35,17 @@ export interface Project {
   photo_count: number;
 }
 
+export interface PhotoPin {
+  id: string;
+  photo_id: string;
+  project_id: string;
+  x_pct: number;
+  y_pct: number;
+  label: string;
+  color: 'red' | 'blue' | 'green' | 'purple' | 'orange';
+  sort_order: number;
+}
+
 export interface Photo {
   id: string;
   project_id: string;
@@ -48,7 +59,9 @@ export interface Photo {
   notes: string | null;
   sort_order: number;
   uploaded_at: string;
+  is_elevation?: boolean;
   condition_data?: ConditionData | null;
+  pins?: PhotoPin[];
 }
 
 export interface ProjectDetail extends Project {
@@ -245,8 +258,27 @@ class ApiClient {
     return res.json();
   }
 
-  async updatePhoto(id: string, data: { notes?: string }): Promise<Photo> {
+  async updatePhoto(id: string, data: { notes?: string; is_elevation?: boolean; elevation?: string }): Promise<Photo> {
     return this.request('PATCH', `/photos/${id}`, data);
+  }
+
+  // ── Photo pins (elevation photo annotations) ────────────────────────────────
+  async createPin(
+    photoId: string,
+    data: { x_pct: number; y_pct: number; label: string; color: PhotoPin['color']; sort_order?: number },
+  ): Promise<PhotoPin> {
+    return this.request('POST', `/photos/${photoId}/pins`, data);
+  }
+
+  async updatePin(
+    pinId: string,
+    data: Partial<{ x_pct: number; y_pct: number; label: string; color: PhotoPin['color']; sort_order: number }>,
+  ): Promise<PhotoPin> {
+    return this.request('PATCH', `/photo-pins/${pinId}`, data);
+  }
+
+  async deletePin(pinId: string): Promise<void> {
+    return this.request('DELETE', `/photo-pins/${pinId}`);
   }
 
   async deletePhoto(id: string): Promise<void> {
