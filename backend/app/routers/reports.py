@@ -566,6 +566,12 @@ def _generate_report_task(
             "church_address": full_address,
         }
 
+        # Overview/Valuation stat cards + Good/Fair/Poor and Frame Work tables -
+        # computed from the same photo notes the condition sheet just parsed,
+        # so the PDF's numbers always agree with the spreadsheet's.
+        from processing.condition_sheet import compute_overview_stats_from_photos
+        overview_stats = compute_overview_stats_from_photos(all_photos_dicts, mode=parsing_mode)
+
         from processing.report_generator import generate_report_pdf
         generate_report_pdf(
             project=project_dict,
@@ -573,6 +579,9 @@ def _generate_report_task(
             photos=photos_dicts,
             spreadsheet_path=xlsx_path if os.path.exists(xlsx_path) else None,
             output_path=pdf_path,
+            overview_stats=overview_stats,
+            replacement_value=project.replacement_value,
+            antique_value=project.antique_value,
         )
 
         # Upload PDF
