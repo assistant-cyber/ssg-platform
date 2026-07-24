@@ -28,6 +28,8 @@ export interface Project {
   status: string;
   customer_access_code: string | null;
   general_notes: string | null;
+  replacement_value: number | null;
+  antique_value: number | null;
   created_at: string;
   updated_at: string | null;
   photo_count: number;
