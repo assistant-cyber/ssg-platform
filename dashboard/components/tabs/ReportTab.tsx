@@ -158,7 +158,12 @@ export default function ReportTab({ project, onRefresh }: Props) {
   const handleGenerate = async () => {
     setGenState('running');
     try {
-      const queued = await api.generateReport(project.id, draft, 'shorthand', true);
+      // 'hybrid' parses compact shorthand tokens (w2 l1 b0...) when present, and
+      // falls back to Claude for freeform/dictated field notes (e.g. "Category three
+      // warping, one broken piece, poor condition") - most real inspection notes are
+      // dictated in plain language, not shorthand, so 'shorthand'-only silently produced
+      // zeroed-out condition data and an empty-looking Overview page.
+      const queued = await api.generateReport(project.id, draft, 'hybrid', true);
       setReport(queued);
       setDraft(reportDraftFromNarrative(queued.narrative, project));
       pollRef.current = setTimeout(() => {
