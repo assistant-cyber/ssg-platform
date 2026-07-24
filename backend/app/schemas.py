@@ -230,7 +230,7 @@ class GenerateReportRequest(BaseModel):
         },
         description="Narrative text or rich report draft payload for each report section.",
     )
-    parsing_mode: str = Field(default="shorthand", pattern="^(shorthand|ai|hybrid)$")
+    parsing_mode: str = Field(default="hybrid", pattern="^(shorthand|ai|hybrid)$")
     count_pieces: bool = False
     glass_flavor: str = Field(default="stained", pattern="^(stained|dalle)$")
     publish_to_portal: bool = True
