@@ -763,6 +763,140 @@ def build_section(story, title, subtitle, text, styles, content_width, section_p
     story.append(PageBreak())
 
 
+class GridPhotoCell(Flowable):
+    """One cell in a multi-photo grid page (Current Condition evidence pages):
+    a fitted photo with a small window-label caption and a truncated note
+    beneath it, sized to sit two-per-row and flow across as many pages as
+    needed via a Table."""
+
+    def __init__(self, img_path: str, caption: str, note: str, cell_width: float, image_area_height: float = 150):
+        Flowable.__init__(self)
+        self.img_path = img_path
+        self.caption = caption
+        self.note = note
+        self.width = cell_width
+        self.image_area_height = image_area_height
+        self.height = image_area_height + 28
+
+    def draw(self):
+        has_image = bool(self.img_path) and os.path.exists(self.img_path)
+        img_w = img_h = 0.0
+        if has_image:
+            img_w, img_h = fit_image_to_box(self.img_path, self.width - 10, self.image_area_height - 8)
+        x = (self.width - img_w) / 2
+        y = self.height - self.image_area_height + (self.image_area_height - img_h) / 2 if has_image else self.height - self.image_area_height
+
+        if has_image:
+            try:
+                self.canv.drawImage(
+                    self.img_path, x, y, width=img_w, height=img_h,
+                    preserveAspectRatio=True, mask="auto",
+                )
+            except Exception:
+                has_image = False
+        if not has_image:
+            self.canv.setFillColor(PALE_GRAY)
+            self.canv.rect(5, self.height - self.image_area_height, self.width - 10, self.image_area_height - 8, fill=1, stroke=0)
+        else:
+            self.canv.setStrokeColor(LIGHT_GRAY)
+            self.canv.setLineWidth(0.75)
+            self.canv.rect(x, y, img_w, img_h, fill=0, stroke=1)
+
+        caption = sanitize_inline_text(self.caption)[:60]
+        self.canv.setFillColor(SCOTTISH_GREEN)
+        self.canv.setFont(DISPLAY_ITALIC, 8.5)
+        self.canv.drawCentredString(self.width / 2, 15, caption)
+
+        note = sanitize_inline_text(self.note)[:88]
+        if note:
+            self.canv.setFillColor(MID_GRAY)
+            self.canv.setFont(BODY_FONT, 6.5)
+            self.canv.drawCentredString(self.width / 2, 4, note)
+
+
+def _grid_photo_window_ref(photo: Dict) -> str:
+    ref = f"{photo.get('window_number', '')}{photo.get('panel_letter', '')}".strip()
+    if ref:
+        return f"Window {ref}"
+    elevation = (photo.get("elevation") or "").strip()
+    if elevation:
+        return elevation.title()
+    return "Photo"
+
+
+def build_photo_grid_section(story, title, subtitle, text, styles, content_width, photos, columns: int = 2):
+    """Like build_section, but instead of up to 4 large single-column photos,
+    lays out every provided photo in a small multi-column grid (small caption
+    + truncated note under each), flowing across as many pages as needed.
+    Matches the reference template's dedicated photo-evidence pages."""
+    story.append(Paragraph(sanitize_inline_text(title), styles["SectionTitle"]))
+    if subtitle:
+        story.append(Paragraph(sanitize_inline_text(subtitle), styles["SectionSubtitle"]))
+    story.append(TaperedRule(content_width))
+    story.append(Spacer(1, 24))
+
+    prose, numbered = split_numbered_items(text)
+    parts = [re.sub(r"\n(?!\d)", " ", p) for p in prose]
+    for index, item in enumerate(numbered):
+        item_clean = re.sub(r"\n", " ", item)
+        parts.append(f"{index + 1}. {item_clean}")
+    callout = build_callout_block(parts, styles)
+    if callout is not None:
+        story.append(callout)
+
+    usable_photos = [p for p in (photos or []) if p.get("local_path") and os.path.exists(p["local_path"])]
+    story.append(PageBreak())
+
+    if usable_photos:
+        story.append(Paragraph("Photo Documentation", styles["SectionTitle"]))
+        story.append(Paragraph("Field photographs of the conditions described above", styles["SectionSubtitle"]))
+        story.append(TaperedRule(content_width))
+        story.append(Spacer(1, 18))
+
+        gutter = 14
+        cell_width = (content_width - gutter * (columns - 1)) / columns
+        cell_image_height = 150
+
+        grid_rows = []
+        current_row = []
+        for photo in usable_photos:
+            note = re.sub(r"\s+", " ", (photo.get("notes") or "").strip())
+            cell = GridPhotoCell(
+                photo["local_path"],
+                _grid_photo_window_ref(photo),
+                note,
+                cell_width,
+                cell_image_height,
+            )
+            current_row.append(cell)
+            if len(current_row) == columns:
+                grid_rows.append(current_row)
+                current_row = []
+        if current_row:
+            while len(current_row) < columns:
+                current_row.append(Spacer(cell_width, cell_image_height + 28))
+            grid_rows.append(current_row)
+
+        grid = Table(
+            grid_rows,
+            colWidths=[cell_width] * columns,
+            rowHeights=[cell_image_height + 28] * len(grid_rows),
+            spaceBefore=0,
+            spaceAfter=0,
+        )
+        grid.hAlign = "LEFT"
+        grid.setStyle(TableStyle([
+            ("VALIGN", (0, 0), (-1, -1), "TOP"),
+            ("LEFTPADDING", (0, 0), (-1, -1), 3),
+            ("RIGHTPADDING", (0, 0), (-1, -1), 3),
+            ("TOPPADDING", (0, 0), (-1, -1), 6),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), 10),
+        ]))
+        story.append(grid)
+
+    story.append(PageBreak())
+
+
 def build_causes_section(story, text, styles, content_width):
     story.append(Paragraph("What Caused These Issues", styles["SectionTitle"]))
     story.append(Paragraph("Understanding the factors behind deterioration", styles["SectionSubtitle"]))
@@ -998,7 +1132,99 @@ def _build_condition_table_from_xlsx(story, xlsx_path, styles, content_width):
     _append_condition_schedule_table(story, normalized_rows, content_width)
 
 
-def build_appendix(story, narrative, xlsx_path, styles, content_width):
+PIN_COLOR_MAP = {
+    "red": HexColor("#D0342C"),
+    "blue": HexColor("#2E5FA3"),
+    "green": HexColor("#3A7D0A"),
+    "purple": HexColor("#7B4397"),
+    "orange": HexColor("#D97B1F"),
+}
+
+
+class ElevationPinImage(Flowable):
+    """A large elevation/exterior photo with numbered colored circle pins
+    overlaid at their recorded positions - the report's "large picture with
+    marked window locations" appendix pages (reference template pages 13-18).
+    Pin x_pct/y_pct are percentages from the image's top-left corner."""
+
+    def __init__(self, img_path: str, pins: list, max_width: float, max_height: float):
+        Flowable.__init__(self)
+        self.img_path = img_path
+        self.pins = pins or []
+        self.max_width = max_width
+        self.max_height = max_height
+        self.width = max_width
+        self.height = max_height
+        self.img_w, self.img_h = fit_image_to_box(img_path, max_width, max_height) if img_path and os.path.exists(img_path) else (max_width, max_height)
+
+    def draw(self):
+        x = (self.max_width - self.img_w) / 2
+        y = (self.max_height - self.img_h) / 2
+
+        if self.img_path and os.path.exists(self.img_path):
+            try:
+                self.canv.drawImage(
+                    self.img_path, x, y, width=self.img_w, height=self.img_h,
+                    preserveAspectRatio=True, mask="auto",
+                )
+            except Exception:
+                self.canv.setFillColor(PALE_GRAY)
+                self.canv.rect(x, y, self.img_w, self.img_h, fill=1, stroke=0)
+        else:
+            self.canv.setFillColor(PALE_GRAY)
+            self.canv.rect(x, y, self.img_w, self.img_h, fill=1, stroke=0)
+
+        self.canv.setStrokeColor(LIGHT_GRAY)
+        self.canv.setLineWidth(1)
+        self.canv.rect(x, y, self.img_w, self.img_h, fill=0, stroke=1)
+
+        radius = 12
+        for pin in self.pins:
+            try:
+                x_pct = float(pin.get("x_pct", 0))
+                y_pct = float(pin.get("y_pct", 0))
+            except (TypeError, ValueError):
+                continue
+            px = x + (x_pct / 100.0) * self.img_w
+            py = y + self.img_h - (y_pct / 100.0) * self.img_h
+            color = PIN_COLOR_MAP.get(str(pin.get("color") or "red").lower(), PIN_COLOR_MAP["red"])
+
+            self.canv.saveState()
+            self.canv.setFillColor(white)
+            self.canv.circle(px, py, radius + 1.4, fill=1, stroke=0)
+            self.canv.setFillColor(color)
+            self.canv.setStrokeColor(white)
+            self.canv.setLineWidth(1.2)
+            self.canv.circle(px, py, radius, fill=1, stroke=1)
+            self.canv.setFillColor(white)
+            self.canv.setFont(BODY_BOLD, 9.5)
+            label = sanitize_inline_text(str(pin.get("label") or ""))[:4]
+            self.canv.drawCentredString(px, py - 3.3, label)
+            self.canv.restoreState()
+
+
+def build_elevation_pages(story, elevation_photos: list, styles, content_width: float):
+    """One full page per elevation/exterior reference photo, large image with
+    numbered pin markers overlaid - matches the reference template's South /
+    North / East / West exterior pages. No-op if no photos are marked as
+    elevation photos or none have pins placed yet."""
+    usable = [p for p in (elevation_photos or []) if p.get("local_path") and os.path.exists(p["local_path"])]
+    if not usable:
+        return
+
+    max_height = 7.3 * inch
+    for photo in usable:
+        title = (photo.get("elevation") or "").strip()
+        title = f"{title.title()} Elevation" if title else "Elevation Reference Photo"
+        story.append(Paragraph(sanitize_inline_text(title), styles["SectionTitle"]))
+        story.append(Paragraph("Numbered pins correspond to the window numbering schedule", styles["SectionSubtitle"]))
+        story.append(TaperedRule(content_width))
+        story.append(Spacer(1, 14))
+        story.append(ElevationPinImage(photo["local_path"], photo.get("pins") or [], content_width, max_height))
+        story.append(PageBreak())
+
+
+def build_appendix(story, narrative, xlsx_path, styles, content_width, elevation_photos=None):
     story.append(Paragraph("Appendix", styles["SectionTitle"]))
     story.append(TaperedRule(content_width))
     story.append(Spacer(1, 24))
@@ -1051,6 +1277,8 @@ def build_appendix(story, narrative, xlsx_path, styles, content_width):
     ))
     story.append(PageBreak())
 
+    build_elevation_pages(story, elevation_photos, styles, content_width)
+
     condition_schedule_title = extract_condition_schedule_title(narrative or {})
     condition_schedule_intro = extract_condition_schedule_intro(narrative or {})
     story.append(Paragraph(
@@ -1078,6 +1306,7 @@ def generate_report_pdf(
     overview_stats: Optional[Dict[str, Any]] = None,
     replacement_value: Optional[float] = None,
     antique_value: Optional[float] = None,
+    elevation_photos: Optional[List[Dict]] = None,
 ) -> str:
     church_name = project.get("church_name") or project.get("name", "Church")
     assess_date = project.get("assess_date", "")
@@ -1154,14 +1383,14 @@ def generate_report_pdf(
         section_photos=resolve_section_photos("overview", photos[:2]),
         pre_callout_content=overview_pre_content,
     )
-    build_section(
+    build_photo_grid_section(
         story,
         "Current Condition",
         "Assessment of structural and aesthetic integrity",
         filled["current_condition"],
         styles,
         content_width,
-        section_photos=resolve_section_photos("current_condition", photos[2:6]),
+        photos=resolve_section_photos("current_condition", photos[2:6]),
     )
     build_causes_section(story, filled["causes"], styles, content_width)
     build_section(
@@ -1174,7 +1403,7 @@ def generate_report_pdf(
         section_photos=resolve_section_photos("hundred_year_plan", photos[6:10]),
     )
     build_summary_section(story, filled["summary"], styles, content_width)
-    build_appendix(story, narrative, spreadsheet_path, styles, content_width)
+    build_appendix(story, narrative, spreadsheet_path, styles, content_width, elevation_photos=elevation_photos)
 
     doc.build(story)
     print(f"Report PDF written to: {output_path}")

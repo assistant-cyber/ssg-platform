@@ -522,6 +522,102 @@ def compute_overview_stats_from_photos(photos: List[Dict], mode: str = "shorthan
     return compute_overview_stats(panels)
 
 
+def _row_id(window_num: str, panel_letter: str) -> str:
+    return f"{window_num}{panel_letter or ''}".strip()
+
+
+def build_condition_schedule_rows_from_photos(photos: List[Dict], mode: str = "shorthand") -> List[Dict]:
+    """Build the Appendix 4 "Window Condition Schedule" table rows straight from
+    freshly-parsed photo notes (same hybrid/AI parsing + window/panel grouping
+    used by compute_overview_stats_from_photos), instead of relying on the
+    per-photo ConditionData rows persisted at upload time (which are only ever
+    parsed with the compact shorthand parser - see
+    app/routers/photos.py::_parse_condition_from_notes). This keeps the PDF's
+    Appendix table numbers consistent with the Overview page and the xlsx,
+    regardless of whether field notes were dictated in plain language or typed
+    as shorthand tokens.
+
+    Returns a list of row dicts matching exactly what
+    report_generator.py::_append_condition_schedule_table expects: id, elev,
+    cond, warp, lead, glass_breaks, wood_rot, paint_caulk, pieces, sqft, notes,
+    is_window.
+    """
+    panels = _parse_photos_to_panels(photos, mode=mode)
+    windows, sorted_windows = _group_panels_by_window(panels)
+
+    def _val(value):
+        if value is None:
+            return ""
+        return str(value)
+
+    rows: List[Dict] = []
+    for wn in sorted_windows:
+        win_data = windows[wn]
+        overall = win_data["overall"]
+        panel_rows = win_data["panels"]
+
+        worst_rank = 0
+        rank_map = {"Poor": 3, "Fair": 2, "Good": 1}
+        has_rot = False
+        has_paint = False
+        for pd in panel_rows:
+            cond = _panel_condition(pd)
+            if cond:
+                worst_rank = max(worst_rank, rank_map[cond])
+            if pd.wood_rot:
+                has_rot = True
+            if pd.paint_fail:
+                has_paint = True
+        if overall:
+            if overall.wood_rot:
+                has_rot = True
+            if overall.paint_fail:
+                has_paint = True
+
+        overall_elev = (overall.elevation if overall else "") or next(
+            (p.elevation for p in panel_rows if p.elevation), ""
+        )
+        window_cond = {3: "Poor", 2: "Fair", 1: "Good"}.get(worst_rank, "")
+
+        rows.append({
+            "id": wn,
+            "elev": (overall_elev or "").upper(),
+            "cond": window_cond,
+            "warp": "",
+            "lead": "",
+            "glass_breaks": "",
+            "wood_rot": "Yes" if has_rot else "",
+            "paint_caulk": "Yes" if has_paint else "",
+            "pieces": "",
+            "sqft": _val(_window_overall_sqft(win_data)) if _window_overall_sqft(win_data) else "",
+            "notes": "",
+            "is_window": True,
+        })
+
+        for pd in panel_rows:
+            cond = _panel_condition(pd) or ""
+            panel_sqft = ""
+            if pd.panel_w and pd.panel_h:
+                panel_sqft = str(math.ceil(pd.panel_w * pd.panel_h / 144))
+            rows.append({
+                "id": _row_id(wn, pd.panel_letter),
+                "elev": (pd.elevation or "").upper(),
+                "cond": cond,
+                "warp": _val(pd.warping),
+                "lead": _val(pd.lead_det),
+                "glass_breaks": _val(pd.breaks),
+                "wood_rot": "Yes" if pd.wood_rot else "",
+                "paint_caulk": "Yes" if pd.paint_fail else "",
+                "pieces": _val(pd.pieces),
+                "sqft": panel_sqft,
+                "notes": (pd.notes or "").strip(),
+                "is_window": False,
+            })
+
+    return rows
+
+
+
 # ─── OpenCV piece counter ─────────────────────────────────────────────────────
 
 def _count_pieces_opencv(image_bytes: bytes) -> Optional[Dict]:
