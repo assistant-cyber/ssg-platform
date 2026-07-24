@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent } from 'react';
 import {
   Camera,
   CheckCircle2,
@@ -14,7 +14,7 @@ import {
   Trash2,
   X,
 } from 'lucide-react';
-import api, { type Photo, type ProjectDetail } from '@/lib/api';
+import api, { type Photo, type PhotoPin, type ProjectDetail } from '@/lib/api';
 import { buildUploadDraftPlans } from '@/lib/photoNaming';
 
 interface Props {
@@ -141,6 +141,10 @@ export default function PhotosTab({ project, onRefresh }: Props) {
   const [interimQueueNotes, setInterimQueueNotes] = useState<Record<string, string>>({});
   const [modalListening, setModalListening] = useState(false);
   const [interimModalNote, setInterimModalNote] = useState('');
+  const [savingElevation, setSavingElevation] = useState(false);
+  const [pins, setPins] = useState<PhotoPin[]>([]);
+  const [draggingPinId, setDraggingPinId] = useState<string | null>(null);
+  const pinImageRef = useRef<HTMLImageElement | null>(null);
 
   const libraryInputRef = useRef<HTMLInputElement | null>(null);
   const cameraInputRef = useRef<HTMLInputElement | null>(null);
@@ -226,6 +230,7 @@ export default function PhotosTab({ project, onRefresh }: Props) {
   useEffect(() => {
     setModalNote(modalPhoto?.notes ?? '');
     setInterimModalNote('');
+    setPins(modalPhoto?.pins ?? []);
   }, [modalPhoto?.id]);
 
   useEffect(() => {
@@ -455,6 +460,175 @@ export default function PhotosTab({ project, onRefresh }: Props) {
       setSavingNote(false);
     }
   };
+
+  // ── Elevation photo pin editor ──────────────────────────────────────────────
+
+  const PIN_COLORS: PhotoPin['color'][] = ['red', 'blue', 'green', 'purple', 'orange'];
+  const PIN_COLOR_HEX: Record<PhotoPin['color'], string> = {
+    red: '#D0342C',
+    blue: '#2E5FA3',
+    green: '#3A7D0A',
+    purple: '#7B4397',
+    orange: '#D97B1F',
+  };
+
+  const toggleElevationPhoto = async () => {
+    if (!modalPhoto || savingElevation) return;
+    setSavingElevation(true);
+    try {
+      await api.updatePhoto(modalPhoto.id, { is_elevation: !modalPhoto.is_elevation });
+      await onRefresh();
+    } finally {
+      setSavingElevation(false);
+    }
+  };
+
+  const setElevationSide = async (side: string) => {
+    if (!modalPhoto) return;
+    setSavingElevation(true);
+    try {
+      await api.updatePhoto(modalPhoto.id, { elevation: side });
+      await onRefresh();
+    } finally {
+      setSavingElevation(false);
+    }
+  };
+
+  // Converts a click/drag position into a percentage relative to the actual
+  // rendered image pixels, accounting for the letterboxing that object-contain
+  // introduces when the image and its container don't share an aspect ratio.
+  const percentFromPointer = (clientX: number, clientY: number): { x_pct: number; y_pct: number } | null => {
+    const img = pinImageRef.current;
+    if (!img) return null;
+    const rect = img.getBoundingClientRect();
+    const naturalW = img.naturalWidth || rect.width;
+    const naturalH = img.naturalHeight || rect.height;
+    if (!naturalW || !naturalH || !rect.width || !rect.height) return null;
+
+    const containerRatio = rect.width / rect.height;
+    const imageRatio = naturalW / naturalH;
+    let renderedW = rect.width;
+    let renderedH = rect.height;
+    if (imageRatio > containerRatio) {
+      renderedH = rect.width / imageRatio;
+    } else {
+      renderedW = rect.height * imageRatio;
+    }
+    const offsetX = rect.left + (rect.width - renderedW) / 2;
+    const offsetY = rect.top + (rect.height - renderedH) / 2;
+
+    const localX = clientX - offsetX;
+    const localY = clientY - offsetY;
+    if (localX < 0 || localY < 0 || localX > renderedW || localY > renderedH) return null;
+
+    return {
+      x_pct: Math.min(100, Math.max(0, (localX / renderedW) * 100)),
+      y_pct: Math.min(100, Math.max(0, (localY / renderedH) * 100)),
+    };
+  };
+
+  const handlePinImageClick = async (event: ReactMouseEvent<HTMLImageElement>) => {
+    if (!modalPhoto?.is_elevation || draggingPinId) return;
+    const point = percentFromPointer(event.clientX, event.clientY);
+    if (!point) return;
+
+    const nextLabel = String(pins.length + 1);
+    const optimisticId = `pending-${Date.now()}`;
+    const optimisticPin: PhotoPin = {
+      id: optimisticId,
+      photo_id: modalPhoto.id,
+      project_id: modalPhoto.project_id,
+      x_pct: point.x_pct,
+      y_pct: point.y_pct,
+      label: nextLabel,
+      color: 'red',
+      sort_order: pins.length,
+    };
+    setPins((current) => [...current, optimisticPin]);
+    try {
+      const saved = await api.createPin(modalPhoto.id, {
+        x_pct: point.x_pct,
+        y_pct: point.y_pct,
+        label: nextLabel,
+        color: 'red',
+        sort_order: pins.length,
+      });
+      setPins((current) => current.map((pin) => (pin.id === optimisticId ? saved : pin)));
+      onRefresh();
+    } catch {
+      setPins((current) => current.filter((pin) => pin.id !== optimisticId));
+    }
+  };
+
+  const updatePinLabel = (pinId: string, label: string) => {
+    setPins((current) => current.map((pin) => (pin.id === pinId ? { ...pin, label } : pin)));
+  };
+
+  const commitPinLabel = async (pinId: string, label: string) => {
+    try {
+      await api.updatePin(pinId, { label });
+      onRefresh();
+    } catch {
+      // Leave the optimistic label in place; re-typing will resubmit.
+    }
+  };
+
+  const updatePinColor = async (pinId: string, color: PhotoPin['color']) => {
+    setPins((current) => current.map((pin) => (pin.id === pinId ? { ...pin, color } : pin)));
+    try {
+      await api.updatePin(pinId, { color });
+      onRefresh();
+    } catch {
+      // Non-fatal - the pin keeps its optimistic color locally.
+    }
+  };
+
+  const deletePin = async (pinId: string) => {
+    setPins((current) => current.filter((pin) => pin.id !== pinId));
+    try {
+      await api.deletePin(pinId);
+      onRefresh();
+    } catch {
+      // Non-fatal - a stale pin left in local state can be removed again on next open.
+    }
+  };
+
+  const handlePinPointerDown = (event: ReactPointerEvent<HTMLButtonElement>, pinId: string) => {
+    event.preventDefault();
+    event.stopPropagation();
+    setDraggingPinId(pinId);
+  };
+
+  useEffect(() => {
+    if (!draggingPinId) return;
+
+    const handleMove = (event: PointerEvent) => {
+      const point = percentFromPointer(event.clientX, event.clientY);
+      if (!point) return;
+      setPins((current) => current.map((pin) => (pin.id === draggingPinId ? { ...pin, ...point } : pin)));
+    };
+    const handleUp = async () => {
+      const pinId = draggingPinId;
+      setDraggingPinId(null);
+      const pin = pins.find((item) => item.id === pinId);
+      if (pin && pinId && !pinId.startsWith('pending-')) {
+        try {
+          await api.updatePin(pinId, { x_pct: pin.x_pct, y_pct: pin.y_pct });
+          onRefresh();
+        } catch {
+          // Non-fatal - position stays as last dragged locally until reopened.
+        }
+      }
+    };
+
+    window.addEventListener('pointermove', handleMove);
+    window.addEventListener('pointerup', handleUp, { once: true });
+    return () => {
+      window.removeEventListener('pointermove', handleMove);
+      window.removeEventListener('pointerup', handleUp);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [draggingPinId]);
 
   // ── Downloads ──────────────────────────────────────────────────────────────
 
@@ -722,7 +896,34 @@ export default function PhotosTab({ project, onRefresh }: Props) {
                 }}
               >
                 <button type="button" onClick={() => void goToPreviousModalPhoto()} disabled={modalPhotoIndex === 0} className="absolute left-3 top-1/2 z-10 -translate-y-1/2 rounded-full bg-white/90 p-2 text-ssg-charcoal shadow disabled:opacity-40"><ChevronLeft size={20} /></button>
-                <img src={api.mediaUrl(modalPhoto.storage_url)} alt={displayPhotoLabel(modalPhoto)} className="h-[42vh] w-full object-contain md:h-[76vh]" />
+                <img
+                  ref={pinImageRef}
+                  src={api.mediaUrl(modalPhoto.storage_url)}
+                  alt={displayPhotoLabel(modalPhoto)}
+                  onClick={(event) => void handlePinImageClick(event)}
+                  className={['h-[42vh] w-full object-contain md:h-[76vh]', modalPhoto.is_elevation ? 'cursor-crosshair' : ''].join(' ')}
+                />
+                {modalPhoto.is_elevation ? pins.map((pin) => (
+                  <button
+                    key={pin.id}
+                    type="button"
+                    onPointerDown={(event) => handlePinPointerDown(event, pin.id)}
+                    style={{
+                      left: `${pin.x_pct}%`,
+                      top: `${pin.y_pct}%`,
+                      backgroundColor: PIN_COLOR_HEX[pin.color] ?? PIN_COLOR_HEX.red,
+                    }}
+                    className="absolute z-20 flex h-7 w-7 -translate-x-1/2 -translate-y-1/2 cursor-grab items-center justify-center rounded-full border-2 border-white text-xs font-bold text-white shadow active:cursor-grabbing"
+                    title={`Pin ${pin.label} - drag to reposition`}
+                  >
+                    {pin.label}
+                  </button>
+                )) : null}
+                {modalPhoto.is_elevation ? (
+                  <div className="pointer-events-none absolute bottom-3 left-1/2 z-10 -translate-x-1/2 rounded-full bg-black/60 px-3 py-1 text-xs text-white">
+                    Click the photo to drop a numbered pin
+                  </div>
+                ) : null}
                 <button type="button" onClick={() => void goToNextModalPhoto()} disabled={modalPhotoIndex === project.photos.length - 1} className="absolute right-3 top-1/2 z-10 -translate-y-1/2 rounded-full bg-white/90 p-2 text-ssg-charcoal shadow disabled:opacity-40"><ChevronRight size={20} /></button>
               </div>
 
@@ -740,6 +941,77 @@ export default function PhotosTab({ project, onRefresh }: Props) {
                   <p><strong>Window:</strong> {photoWindowSummary(modalPhoto)}</p>
                   {modalPhoto.elevation ? <p><strong>Elevation:</strong> {modalPhoto.elevation}</p> : null}
                   <p><strong>Project:</strong> {project.name}</p>
+                </div>
+
+                <div className="rounded-2xl border border-black/10 p-4">
+                  <label className="flex items-center justify-between gap-3">
+                    <span>
+                      <span className="text-sm font-semibold text-ssg-charcoal">Elevation reference photo</span>
+                      <span className="mt-0.5 block text-xs text-ssg-muted">Wide exterior shot for the report&apos;s large annotated pages - click the photo to drop numbered pins.</span>
+                    </span>
+                    <input
+                      type="checkbox"
+                      checked={Boolean(modalPhoto.is_elevation)}
+                      onChange={() => void toggleElevationPhoto()}
+                      disabled={savingElevation}
+                      className="h-5 w-5 shrink-0 accent-ssg-green"
+                    />
+                  </label>
+
+                  {modalPhoto.is_elevation ? (
+                    <div className="mt-3 space-y-3 border-t border-black/10 pt-3">
+                      <label className="flex items-center gap-2 text-xs text-ssg-muted">
+                        Side of building
+                        <select
+                          className="input h-8 flex-1 text-sm"
+                          value={modalPhoto.elevation ?? ''}
+                          onChange={(event) => void setElevationSide(event.target.value)}
+                        >
+                          <option value="">Not set</option>
+                          <option value="north">North</option>
+                          <option value="south">South</option>
+                          <option value="east">East</option>
+                          <option value="west">West</option>
+                        </select>
+                      </label>
+                      {pins.length === 0 ? (
+                        <p className="text-xs text-ssg-muted">No pins yet - click anywhere on the photo to add one.</p>
+                      ) : pins.map((pin) => (
+                        <div key={pin.id} className="flex items-center gap-2">
+                          <span
+                            className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-[11px] font-bold text-white"
+                            style={{ backgroundColor: PIN_COLOR_HEX[pin.color] ?? PIN_COLOR_HEX.red }}
+                          >
+                            {pin.label}
+                          </span>
+                          <input
+                            className="input h-9 min-w-0 flex-1 text-sm"
+                            value={pin.label}
+                            onChange={(event) => updatePinLabel(pin.id, event.target.value)}
+                            onBlur={(event) => void commitPinLabel(pin.id, event.target.value)}
+                            placeholder="Window label"
+                          />
+                          <select
+                            className="input h-9 w-28 text-sm"
+                            value={pin.color}
+                            onChange={(event) => void updatePinColor(pin.id, event.target.value as PhotoPin['color'])}
+                          >
+                            {PIN_COLORS.map((color) => (
+                              <option key={color} value={color}>{color[0].toUpperCase() + color.slice(1)}</option>
+                            ))}
+                          </select>
+                          <button
+                            type="button"
+                            onClick={() => void deletePin(pin.id)}
+                            className="rounded-full p-1.5 text-ssg-muted hover:bg-red-50 hover:text-red-600"
+                            aria-label="Delete pin"
+                          >
+                            <Trash2 size={14} />
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  ) : null}
                 </div>
 
                 <div>
