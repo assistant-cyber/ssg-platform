@@ -69,6 +69,22 @@ def _ensure_additive_columns() -> None:
             if column_name not in existing_columns:
                 conn.execute(text(f"ALTER TABLE projects ADD COLUMN {column_name} {column_type}"))
 
+    # photos.is_elevation - marks a photo as a wide exterior/elevation shot
+    # eligible for pin placement. New DBs get it via create_all(); existing
+    # ones need the column added here. Boolean columns need a default+backfill
+    # on Postgres since existing rows can't satisfy a NOT NULL constraint for
+    # a column that didn't exist yet.
+    if "photos" in inspector.get_table_names():
+        photo_columns = {col["name"] for col in inspector.get_columns("photos")}
+        if "is_elevation" not in photo_columns:
+            bool_type = "BOOLEAN" if not is_sqlite else "BOOLEAN"
+            default_literal = "0" if is_sqlite else "FALSE"
+            with engine.begin() as conn:
+                conn.execute(text(
+                    f"ALTER TABLE photos ADD COLUMN is_elevation {bool_type} "
+                    f"NOT NULL DEFAULT {default_literal}"
+                ))
+
 
 def create_tables() -> None:
     """Import all models so their metadata is registered, then create tables."""

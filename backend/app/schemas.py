@@ -130,17 +130,52 @@ class PhotoOut(BaseModel):
     uploaded_at: datetime
     uploaded_by_id: Optional[str] = None
     sort_order: int
+    is_elevation: bool = False
     condition_data: Optional["ConditionDataOut"] = None
+    pins: List["PhotoPinOut"] = []
 
 
 class PhotoUpdate(BaseModel):
     notes: Optional[str] = None
     sort_order: Optional[int] = None
     taken_at: Optional[datetime] = None
+    is_elevation: Optional[bool] = None
+    elevation: Optional[str] = None
 
 
 class PhotoDownloadRequest(BaseModel):
     photo_ids: List[str] = Field(default_factory=list)
+
+
+# ─── PhotoPin ─────────────────────────────────────────────────────────────────
+
+class PhotoPinCreate(BaseModel):
+    x_pct: float = Field(..., ge=0, le=100)
+    y_pct: float = Field(..., ge=0, le=100)
+    label: str = ""
+    color: str = Field(default="red", pattern="^(red|blue|green|purple|orange)$")
+    sort_order: int = 0
+
+
+class PhotoPinUpdate(BaseModel):
+    x_pct: Optional[float] = Field(default=None, ge=0, le=100)
+    y_pct: Optional[float] = Field(default=None, ge=0, le=100)
+    label: Optional[str] = None
+    color: Optional[str] = Field(default=None, pattern="^(red|blue|green|purple|orange)$")
+    sort_order: Optional[int] = None
+
+
+class PhotoPinOut(BaseModel):
+    model_config = {"from_attributes": True}
+
+    id: str
+    photo_id: str
+    project_id: str
+    x_pct: float
+    y_pct: float
+    label: str
+    color: str
+    sort_order: int
 
 
 # ─── ConditionData ────────────────────────────────────────────────────────────

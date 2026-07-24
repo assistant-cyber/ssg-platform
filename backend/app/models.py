@@ -107,6 +107,10 @@ class Photo(Base):
     uploaded_at = Column(DateTime, default=datetime.utcnow, nullable=False)
     uploaded_by_id = Column(String, ForeignKey("users.id"), nullable=True)
     sort_order = Column(Integer, default=0, nullable=False)
+    # Marks this photo as a wide exterior/elevation reference shot eligible for
+    # numbered pin placement (report appendix "Elevation Reference Photos"
+    # pages), as opposed to an ordinary close-up window/panel photo.
+    is_elevation = Column(Boolean, default=False, nullable=False)
 
     # Relationships
     project = relationship("Project", back_populates="photos")
@@ -115,6 +119,10 @@ class Photo(Base):
     )
     condition_data = relationship(
         "ConditionData", back_populates="photo", uselist=False, cascade="all, delete-orphan"
+    )
+    pins = relationship(
+        "PhotoPin", back_populates="photo", cascade="all, delete-orphan",
+        order_by="PhotoPin.sort_order",
     )
 
 
@@ -146,6 +154,29 @@ class ConditionData(Base):
     # Relationships
     photo = relationship("Photo", back_populates="condition_data")
     project = relationship("Project", back_populates="condition_data")
+
+
+# ─── PhotoPin ─────────────────────────────────────────────────────────────────
+
+class PhotoPin(Base):
+    """A numbered marker placed on a wide elevation/exterior photo, pointing at
+    a specific window's location for the report's large-photo appendix pages
+    (matches the reference template's red/blue circled window-number pins on
+    South/North/East/West exterior shots)."""
+    __tablename__ = "photo_pins"
+
+    id = Column(String, primary_key=True, default=new_uuid)
+    photo_id = Column(String, ForeignKey("photos.id"), nullable=False)
+    project_id = Column(String, ForeignKey("projects.id"), nullable=False)
+    x_pct = Column(Float, nullable=False)   # 0-100, from left edge of image
+    y_pct = Column(Float, nullable=False)   # 0-100, from top edge of image
+    label = Column(String, nullable=False, default="")
+    color = Column(String, nullable=False, default="red")  # red|blue|green|purple|orange
+    sort_order = Column(Integer, default=0, nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+
+    # Relationships
+    photo = relationship("Photo", back_populates="pins")
 
 
 # ─── Estimate ─────────────────────────────────────────────────────────────────
