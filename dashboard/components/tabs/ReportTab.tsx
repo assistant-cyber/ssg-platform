@@ -56,6 +56,13 @@ export default function ReportTab({ project, onRefresh }: Props) {
   const [aiWriting, setAiWriting] = useState(false);
   const [aiError, setAiError] = useState<string | null>(null);
   const [isDraftDirty, setIsDraftDirty] = useState(false);
+  const [replacementValue, setReplacementValue] = useState<string>(
+    project.replacement_value != null ? String(project.replacement_value) : ''
+  );
+  const [antiqueValue, setAntiqueValue] = useState<string>(
+    project.antique_value != null ? String(project.antique_value) : ''
+  );
+  const [savingValuation, setSavingValuation] = useState(false);
   const pollRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
@@ -65,6 +72,8 @@ export default function ReportTab({ project, onRefresh }: Props) {
     setAiContext((project.latest_report?.narrative?._meta as { ai_context?: string } | undefined)?.ai_context ?? '');
     setLoading(false);
     setIsDraftDirty(false);
+    setReplacementValue(project.replacement_value != null ? String(project.replacement_value) : '');
+    setAntiqueValue(project.antique_value != null ? String(project.antique_value) : '');
   }, [project]);
 
   useEffect(() => () => {
@@ -98,6 +107,19 @@ export default function ReportTab({ project, onRefresh }: Props) {
       await onRefresh();
     } finally {
       setSaving(false);
+    }
+  };
+
+  const saveValuation = async (field: 'replacement_value' | 'antique_value', raw: string) => {
+    const trimmed = raw.trim();
+    const parsed = trimmed === '' ? null : Number(trimmed.replace(/[^0-9.]/g, ''));
+    if (parsed !== null && Number.isNaN(parsed)) return;
+    setSavingValuation(true);
+    try {
+      await api.updateProject(project.id, { [field]: parsed } as Partial<typeof project>);
+      await onRefresh();
+    } finally {
+      setSavingValuation(false);
     }
   };
 
@@ -357,6 +379,47 @@ export default function ReportTab({ project, onRefresh }: Props) {
                   placeholder="Add anything the AI should know about this church, the intended tone, restoration priorities, historical context, or customer-specific framing."
                 />
               </label>
+
+              <div className="rounded-2xl border border-black/5 bg-ssg-lighter p-4">
+                <p className="text-sm font-semibold text-ssg-charcoal">Valuation (Overview page)</p>
+                <p className="mt-1 text-xs leading-5 text-ssg-muted">
+                  These are professional judgment calls, not auto-calculated - enter them before building the PDF so
+                  the Overview page shows real numbers instead of &ldquo;Not yet provided&rdquo;.
+                </p>
+                <div className="mt-3 grid gap-3 sm:grid-cols-2">
+                  <label className="space-y-1">
+                    <span className="label mb-0 text-xs">Replacement Value ($)</span>
+                    <input
+                      type="number"
+                      inputMode="decimal"
+                      min={0}
+                      step={1}
+                      value={replacementValue}
+                      onChange={(event) => setReplacementValue(event.target.value)}
+                      onBlur={(event) => void saveValuation('replacement_value', event.target.value)}
+                      placeholder="e.g. 3000000"
+                      className="input"
+                    />
+                  </label>
+                  <label className="space-y-1">
+                    <span className="label mb-0 text-xs">Antique Value ($)</span>
+                    <input
+                      type="number"
+                      inputMode="decimal"
+                      min={0}
+                      step={1}
+                      value={antiqueValue}
+                      onChange={(event) => setAntiqueValue(event.target.value)}
+                      onBlur={(event) => void saveValuation('antique_value', event.target.value)}
+                      placeholder="e.g. 6000000"
+                      className="input"
+                    />
+                  </label>
+                </div>
+                {savingValuation ? (
+                  <p className="mt-2 text-xs text-ssg-muted">Saving...</p>
+                ) : null}
+              </div>
 
               {aiError ? (
                 <div className="rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
