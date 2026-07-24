@@ -49,6 +49,8 @@ class ProjectCreate(BaseModel):
     address_zip: Optional[str] = None
     assigned_staff_id: Optional[str] = None
     general_notes: Optional[str] = None
+    replacement_value: Optional[float] = None  # insurance/replication cost estimate ($)
+    antique_value: Optional[float] = None      # antique/art value when in good condition ($)
 
 
 class ProjectUpdate(BaseModel):
@@ -61,6 +63,8 @@ class ProjectUpdate(BaseModel):
     status: Optional[str] = None
     assigned_staff_id: Optional[str] = None
     general_notes: Optional[str] = None
+    replacement_value: Optional[float] = None  # insurance/replication cost estimate ($)
+    antique_value: Optional[float] = None      # antique/art value when in good condition ($)
 
 
 class ProjectOut(BaseModel):
@@ -77,6 +81,8 @@ class ProjectOut(BaseModel):
     assigned_staff_id: Optional[str] = None
     customer_access_code: Optional[str] = None
     general_notes: Optional[str] = None
+    replacement_value: Optional[float] = None  # insurance/replication cost estimate ($)
+    antique_value: Optional[float] = None      # antique/art value when in good condition ($)
     created_at: datetime
     updated_at: datetime
     photo_count: Optional[int] = None
@@ -96,6 +102,8 @@ class ProjectDetail(BaseModel):
     assigned_staff_id: Optional[str] = None
     customer_access_code: Optional[str] = None
     general_notes: Optional[str] = None
+    replacement_value: Optional[float] = None  # insurance/replication cost estimate ($)
+    antique_value: Optional[float] = None      # antique/art value when in good condition ($)
     created_at: datetime
     updated_at: datetime
     photos: List["PhotoOut"] = []

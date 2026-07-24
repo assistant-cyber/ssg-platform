@@ -37,8 +37,42 @@ def get_db():
         db.close()
 
 
+def _ensure_additive_columns() -> None:
+    """Add newly-introduced nullable columns to tables that already exist.
+
+    This project has no Alembic migration chain - Base.metadata.create_all()
+    only creates tables that are missing entirely, it will NOT add new columns
+    to a table that already exists in production (Railway/Postgres). Since we
+    can't rely on a migration tool, new nullable columns get added here in an
+    idempotent, additive-only way so they show up on both SQLite (dev) and
+    Postgres (prod) the first time the app boots after a model change.
+
+    Only ever ADD nullable columns here - never rename/drop/alter existing
+    ones, since that's not safe to do blindly against a live database.
+    """
+    from sqlalchemy import inspect, text
+
+    is_sqlite = _db_url.startswith("sqlite")
+    inspector = inspect(engine)
+    if "projects" not in inspector.get_table_names():
+        return  # brand new DB - create_all() above already created it in full
+
+    existing_columns = {col["name"] for col in inspector.get_columns("projects")}
+    numeric_type = "REAL" if is_sqlite else "DOUBLE PRECISION"
+    new_columns = {
+        "replacement_value": numeric_type,
+        "antique_value": numeric_type,
+    }
+
+    with engine.begin() as conn:
+        for column_name, column_type in new_columns.items():
+            if column_name not in existing_columns:
+                conn.execute(text(f"ALTER TABLE projects ADD COLUMN {column_name} {column_type}"))
+
+
 def create_tables() -> None:
     """Import all models so their metadata is registered, then create tables."""
     # Importing models here registers them with Base.metadata
     import app.models  # noqa: F401
     Base.metadata.create_all(bind=engine)
+    _ensure_additive_columns()

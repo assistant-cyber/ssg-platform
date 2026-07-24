@@ -65,6 +65,12 @@ class Project(Base):
     assigned_staff_id = Column(String, ForeignKey("users.id"), nullable=True)
     customer_access_code = Column(String, nullable=True)  # 6-digit code shown to customer
     general_notes = Column(Text, nullable=True)
+    # Report valuation figures - these are professional judgment calls (antique/art
+    # value especially), so they are entered manually by staff in the Report tab
+    # rather than computed automatically. Both are optional/nullable so existing
+    # projects and in-progress assessments are unaffected until someone fills them in.
+    replacement_value = Column(Float, nullable=True)  # insurance/replication cost estimate ($)
+    antique_value = Column(Float, nullable=True)      # antique/art value when in good condition ($)
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
 
