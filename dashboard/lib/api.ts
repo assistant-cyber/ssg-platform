@@ -60,6 +60,9 @@ export interface Photo {
   sort_order: number;
   uploaded_at: string;
   is_elevation?: boolean;
+  dim_width?: number | null;
+  dim_height?: number | null;
+  dim_depth?: number | null;
   condition_data?: ConditionData | null;
   pins?: PhotoPin[];
 }
@@ -258,7 +261,7 @@ class ApiClient {
     return res.json();
   }
 
-  async updatePhoto(id: string, data: { notes?: string; is_elevation?: boolean; elevation?: string }): Promise<Photo> {
+  async updatePhoto(id: string, data: { notes?: string; is_elevation?: boolean; elevation?: string; dim_width?: number | null; dim_height?: number | null; dim_depth?: number | null }): Promise<Photo> {
     return this.request('PATCH', `/photos/${id}`, data);
   }
 
