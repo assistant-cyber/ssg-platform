@@ -127,6 +127,22 @@ async function proxy(request: NextRequest, path: string[]) {
       ? true // unknown size, stream to be safe
       : contentLength > STREAM_THRESHOLD_BYTES;
 
+  // Responses with these statuses are defined by the Fetch spec to never
+  // carry a body. Passing any body value (even an empty ArrayBuffer/stream)
+  // into the Response constructor for one of these statuses throws
+  // "TypeError: Response constructor: Invalid response status code" in
+  // Node's fetch implementation, which crashes this serverless function and
+  // surfaces to the browser as an opaque 500 -- even though the upstream
+  // call actually succeeded (e.g. a 204 from a successful DELETE).
+  const NULL_BODY_STATUSES = new Set([101, 204, 205, 304]);
+  if (NULL_BODY_STATUSES.has(upstream.status)) {
+    return new Response(null, {
+      status: upstream.status,
+      statusText: upstream.statusText,
+      headers: responseHeaders,
+    });
+  }
+
   if (shouldStream && upstream.body) {
     for (const header of STREAMED_BODY_HEADERS) {
       responseHeaders.delete(header);
