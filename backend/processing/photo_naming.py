@@ -53,7 +53,7 @@ def _parse_word_number(text: str) -> Optional[Tuple[str, str, int]]:
             return '', 0
         m = re.match(r'^([a-z])(?![a-z])', remainder)
         if m:
-            return m.group(1).upper(), len(m.group(0))
+            return m.group(1).lower(), len(m.group(0))
         if not remainder[0].isalpha():
             return '', 0
         return None   # starts with letter sequence → ambiguous
@@ -106,7 +106,7 @@ def _extract_base_label_parts(notes: str) -> Tuple[Optional[str], Optional[str]]
     num_match = re.match(r'^(\d+)([a-zA-Z]?)', notes_stripped)
     if num_match:
         win = num_match.group(1)
-        letter = num_match.group(2).upper() or None
+        letter = num_match.group(2).lower() or None
         return win, letter
 
     word_result = _parse_word_number(notes_stripped)
@@ -131,7 +131,7 @@ def normalize_field_note(notes: str) -> str:
     if not window_number:
         return notes_stripped
 
-    label = f"{window_number}{(panel_letter or 'A').upper()}"
+    label = f"{window_number}{(panel_letter or '').lower()}"
     suffix = remainder
     digit_match = re.match(r'^(\d+)([a-zA-Z]?)', remainder)
     if digit_match:
