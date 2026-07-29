@@ -116,7 +116,7 @@ function parseWordNumber(text: string): { matchLength: number; numberString: str
   const trailingLetter = (remainder: string): { consumed: number; value: string } | null => {
     if (!remainder) return { consumed: 0, value: '' };
     const singleLetter = remainder.match(/^([a-z])(?![a-z])/);
-    if (singleLetter) return { consumed: singleLetter[0].length, value: singleLetter[1].toUpperCase() };
+    if (singleLetter) return { consumed: singleLetter[0].length, value: singleLetter[1].toLowerCase() };
     if (!/[a-z]/.test(remainder[0])) return { consumed: 0, value: '' };
     return null;
   };
@@ -179,7 +179,7 @@ export function extractLabelFromDescription(notes: string): string | null {
   if (lower.startsWith('site notes')) return 'site_notes';
 
   const numeric = trimmed.match(/^(\d+)([a-zA-Z]?)/);
-  if (numeric) return `${numeric[1]}${numeric[2].toUpperCase()}`;
+  if (numeric) return `${numeric[1]}${numeric[2].toLowerCase()}`;
 
   const windowDirective = parseWindowDirective(trimmed);
   if (windowDirective) return windowDirective.label;
@@ -198,7 +198,7 @@ export function extractLabelParts(notes: string): { panelLetter: string | null; 
   if (numeric) {
     return {
       windowNumber: numeric[1],
-      panelLetter: numeric[2] ? numeric[2].toUpperCase() : null,
+      panelLetter: numeric[2] ? numeric[2].toLowerCase() : null,
     };
   }
 
@@ -227,10 +227,11 @@ function cleanupRemainder(text: string) {
 
 function panelLettersToIndex(panelLetters: string | null) {
   if (!panelLetters) return -1;
-  if (!/^[A-Z]+$/.test(panelLetters)) return -1;
+  const upper = panelLetters.toUpperCase();
+  if (!/^[A-Z]+$/.test(upper)) return -1;
 
   let value = 0;
-  for (const letter of panelLetters) {
+  for (const letter of upper) {
     value = (value * 26) + (letter.charCodeAt(0) - 64);
   }
   return value - 1;
@@ -241,7 +242,7 @@ function panelIndexToLetters(index: number) {
   let result = '';
 
   do {
-    result = String.fromCharCode(65 + (current % 26)) + result;
+    result = String.fromCharCode(97 + (current % 26)) + result;
     current = Math.floor(current / 26) - 1;
   } while (current >= 0);
 
@@ -259,10 +260,10 @@ function parseWindowDirective(notes: string): ParsedLeadingLabel | null {
   const numeric = remainderAfterPrefix.match(/^(\d+)([a-zA-Z]?)/);
   if (numeric) {
     const windowNumber = numeric[1];
-    const panelLetter = numeric[2] ? numeric[2].toUpperCase() : 'A';
+    const panelLetter = numeric[2] ? numeric[2].toLowerCase() : null;
     return {
       explicitSequenceWindow: true,
-      label: `${windowNumber}${panelLetter}`,
+      label: `${windowNumber}${panelLetter ?? ''}`,
       panelLetter,
       remainder: cleanupRemainder(remainderAfterPrefix.slice(numeric[0].length)),
       windowNumber,
@@ -272,11 +273,11 @@ function parseWindowDirective(notes: string): ParsedLeadingLabel | null {
   const wordNumber = parseWordNumber(remainderAfterPrefix);
   if (!wordNumber) return null;
   const windowNumber = wordNumber.numberString;
-  const panelLetter = wordNumber.trailingLetter || 'A';
+  const panelLetter = wordNumber.trailingLetter || null;
 
   return {
     explicitSequenceWindow: true,
-    label: `${windowNumber}${panelLetter}`,
+    label: `${windowNumber}${panelLetter ?? ''}`,
     panelLetter,
     remainder: cleanupRemainder(remainderAfterPrefix.slice(wordNumber.matchLength)),
     windowNumber,
@@ -294,8 +295,8 @@ function parseExplicitLabel(notes: string): ParsedLeadingLabel | null {
   if (numeric) {
     return {
       explicitSequenceWindow: Boolean(numeric[2]),
-      label: `${numeric[1]}${numeric[2].toUpperCase()}`,
-      panelLetter: numeric[2] ? numeric[2].toUpperCase() : null,
+      label: `${numeric[1]}${numeric[2].toLowerCase()}`,
+      panelLetter: numeric[2] ? numeric[2].toLowerCase() : null,
       remainder: cleanupRemainder(trimmed.slice(numeric[0].length)),
       windowNumber: numeric[1],
     };
@@ -335,9 +336,9 @@ function normalizeDraftNotes(notes: string, context: DraftContext): NormalizedDr
 
   const panelOnly = trimmed.match(/^([a-zA-Z])(?=(\s|$))(.*)$/);
   if (panelOnly && context.currentWindow) {
-    const nextLabel = `${context.currentWindow}${panelOnly[1].toUpperCase()}`;
+    const nextLabel = `${context.currentWindow}${panelOnly[1].toLowerCase()}`;
     context.currentLabel = nextLabel;
-    context.nextPanelIndex = panelLettersToIndex(panelOnly[1].toUpperCase()) + 1;
+    context.nextPanelIndex = panelLettersToIndex(panelOnly[1]) + 1;
     context.inheritCounter = 0;
 
     return {
@@ -403,7 +404,7 @@ function seedContext(existing: ExistingPhotoSeed[]): DraftContext {
 
     if (explicitWindow) {
       currentWindow = explicitWindow;
-      nextPanelIndex = explicitPanel ? panelLettersToIndex(explicitPanel.toUpperCase()) + 1 : 0;
+      nextPanelIndex = explicitPanel ? panelLettersToIndex(explicitPanel) + 1 : 0;
     } else if (noteLabel) {
       const parts = extractLabelParts(photo.notes ?? '');
       currentWindow = parts.windowNumber ?? currentWindow;
