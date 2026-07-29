@@ -71,23 +71,87 @@ def _extract_window_parts(notes: str):
 
 
 def _increment_panel_letter(panel_letter: Optional[str]) -> str:
-    """Return the next panel letter in sequence: A->B, ..., Z->AA, AZ->BA, etc.
+    """Return the next panel letter in sequence: a->b, ..., z->aa, az->ba, etc.
 
-    Mirrors the spreadsheet-column style increment used by the dashboard's
-    client-side label predictor (dashboard/lib/photoNaming.ts).
+    A blank/None input (the window's bare first/overall photo) increments to
+    "a" - the first lettered panel after it. Mirrors the spreadsheet-column
+    style increment used by the dashboard's client-side label predictor
+    (dashboard/lib/photoNaming.ts). Existing projects may have older
+    uppercase letters (e.g. "1A") stored from before this project switched to
+    lowercase - those are lowercased here too so a new photo appended to an
+    old window still continues its sequence correctly (as lowercase, going
+    forward), instead of only ever comparing exact case.
     """
-    letters = (panel_letter or "").strip().upper()
+    letters = (panel_letter or "").strip().lower()
     if not letters or not letters.isalpha():
-        return "A"
+        return "a"
     chars = list(letters)
     i = len(chars) - 1
     while i >= 0:
-        if chars[i] != "Z":
+        if chars[i] != "z":
             chars[i] = chr(ord(chars[i]) + 1)
             return "".join(chars)
-        chars[i] = "A"
+        chars[i] = "a"
         i -= 1
-    return "A" + "".join(chars)
+    return "a" + "".join(chars)
+
+
+def _window_already_has_photos(
+    project_id: str,
+    db: Session,
+    window_number: str,
+    exclude_photo_id: Optional[str] = None,
+) -> bool:
+    """True if this project already has at least one other photo tagged with
+    this window number.
+
+    Used to tell a genuinely new window's first/overall shot (bare label,
+    e.g. "1", with no panel letter) apart from an explicit re-mention of a
+    window that already has photos (e.g. typing "window 1" again after 1a,
+    1b already exist) - the latter should continue that window's a/b/c
+    sequence rather than resetting it back to a bare label.
+    """
+    query = db.query(Photo.id).filter(
+        Photo.project_id == project_id,
+        Photo.window_number == window_number,
+    )
+    if exclude_photo_id:
+        query = query.filter(Photo.id != exclude_photo_id)
+    return query.first() is not None
+
+
+def _next_panel_letter_for_window(
+    project_id: str,
+    db: Session,
+    window_number: str,
+    exclude_photo_id: Optional[str] = None,
+) -> str:
+    """Next panel letter for a SPECIFIC window number, based on the highest
+    lettered photo already tagged with it (bare/no-letter counts as the
+    position before "a").
+
+    This is deliberately scoped to one window, unlike ``_auto_fill_label``
+    (which continues from whatever the most recently uploaded photo in the
+    whole project happens to be, assuming photos are shot window-by-window
+    in order). It's needed for the case where an existing window is
+    explicitly re-mentioned out of that normal order (e.g. typing "window 1"
+    again after other windows have already been photographed) - continuing
+    from "the last photo in the project" would wrongly pick up whatever
+    window was shot most recently instead of window 1's own sequence.
+    """
+    query = db.query(Photo.panel_letter).filter(
+        Photo.project_id == project_id,
+        Photo.window_number == window_number,
+    )
+    if exclude_photo_id:
+        query = query.filter(Photo.id != exclude_photo_id)
+    letters = [(row[0] or "").strip().lower() for row in query.all()]
+
+    def _rank(letter: str):
+        return (0,) if not letter else (1, len(letter), letter)
+
+    best = max(letters, key=_rank, default="")
+    return _increment_panel_letter(best)
 
 
 def _auto_fill_label(
@@ -153,31 +217,38 @@ def _make_unique_filename(
         counter += 1
 
 
-def _photo_download_name(photo: Photo, used_names: set[str]) -> str:
-    """Filename used inside the downloaded zip.
+def _photo_download_path(photo: Photo, used_paths: set[str]) -> str:
+    """Path used inside the downloaded zip: one folder per window number.
 
-    This is always derived strictly from the window number / panel letter
-    label (e.g. "1A.jpg", "8C.jpg") - never from the note text or the
-    original camera filename - so downloaded files are named in the same
-    1a/1b/1c/... sequence used to identify the photos on site. Falls back to
-    a plain sequential name only when a photo has no label at all.
+    Each window gets its own folder named after its number ("1", "2", ...).
+    Inside that folder, the window's bare/overall first photo is named after
+    the window number itself ("1.jpg"), and every subsequent panel is named
+    after just its letter ("a.jpg", "b.jpg", ...) - the folder already
+    conveys the window number, so the filename doesn't repeat it. Names are
+    always derived strictly from the window number / panel letter label -
+    never from the note text or the original camera filename. Letter case is
+    used exactly as stored (never re-cased here), so older projects with
+    uppercase panel letters (e.g. "1A") still nest correctly as "1/A.jpg"
+    alongside newer lowercase ones. Falls back to a flat sequential name only
+    when a photo has no window number at all.
     """
     extension = Path(photo.original_filename or photo.storage_url).suffix or ".jpg"
 
     if photo.window_number:
-        base_name = f"{photo.window_number}{(photo.panel_letter or '').upper()}{extension}"
+        folder = photo.window_number
+        base_name = (photo.panel_letter or "").strip() or photo.window_number
+        candidate_path = f"{folder}/{base_name}{extension}"
     else:
-        base_name = f"photo_{photo.sort_order + 1:03d}{extension}"
+        candidate_path = f"photo_{photo.sort_order + 1:03d}{extension}"
 
-    stem = Path(base_name).stem or "photo"
-    extension = Path(base_name).suffix or ".jpg"
-    candidate = f"{stem}{extension}"
+    stem = candidate_path[: -len(extension)] if extension and candidate_path.endswith(extension) else candidate_path
     counter = 2
-    while candidate in used_names:
-        candidate = f"{stem}_{counter}{extension}"
+    final_path = candidate_path
+    while final_path in used_paths:
+        final_path = f"{stem}_{counter}{extension}"
         counter += 1
-    used_names.add(candidate)
-    return candidate
+    used_paths.add(final_path)
+    return final_path
 
 
 def _photo_bytes(photo: Photo) -> bytes:
@@ -196,17 +267,18 @@ def _photo_sort_key(photo: Photo):
 
 def _archive_response(photos: list[Photo], archive_filename: str, folder_name: str = "") -> StreamingResponse:
     archive_buffer = io.BytesIO()
-    used_names: set[str] = set()
+    used_paths: set[str] = set()
 
-    # Sort photos: window number numerically, then panel letter a->z
+    # Sort photos: window number numerically, then panel letter a->z (bare
+    # labels sort first within a window, since "" < any letter).
     sorted_photos = sorted(photos, key=_photo_sort_key)
 
     prefix = f"{folder_name}/" if folder_name else ""
 
     with zipfile.ZipFile(archive_buffer, "w", compression=zipfile.ZIP_DEFLATED) as archive:
         for photo in sorted_photos:
-            filename = _photo_download_name(photo, used_names)
-            archive.writestr(f"{prefix}{filename}", _photo_bytes(photo))
+            path = _photo_download_path(photo, used_paths)
+            archive.writestr(f"{prefix}{path}", _photo_bytes(photo))
 
     archive_buffer.seek(0)
     return StreamingResponse(
@@ -262,10 +334,18 @@ async def upload_photo(
     if not win_num:
         # No parseable label in this photo's own notes (e.g. left blank) -
         # continue the sequence from the last labeled photo in this project
-        # (1A -> 1B -> 1C -> 1D ...) instead of leaving it unlabeled.
+        # (1 -> a -> b -> c ...) instead of leaving it unlabeled.
         auto_win_num, auto_panel_letter = _auto_fill_label(project_id, db)
         if auto_win_num:
             win_num, panel_letter = auto_win_num, auto_panel_letter
+    elif not panel_letter:
+        # A window number was given but no letter (e.g. "1" or "window 1
+        # broken lead"). If this is the first photo taken of this window,
+        # leave it bare - that's the window's overall/first shot ("1"). If
+        # the window already has photos, treat this as an explicit
+        # continuation of that sequence instead of resetting it back to bare.
+        if _window_already_has_photos(project_id, db, win_num):
+            panel_letter = _next_panel_letter_for_window(project_id, db, win_num)
 
     requested_filename = Path(filename_override).name.strip() if filename_override else ""
 
@@ -464,6 +544,13 @@ def update_photo(
             )
             if auto_win_num:
                 win_num, panel_letter = auto_win_num, auto_panel_letter
+        elif not panel_letter:
+            # Window number given but no letter - bare unless this window
+            # already has other photos (see _window_already_has_photos).
+            if _window_already_has_photos(photo.project_id, db, win_num, exclude_photo_id=photo.id):
+                panel_letter = _next_panel_letter_for_window(
+                    photo.project_id, db, win_num, exclude_photo_id=photo.id,
+                )
         photo.window_number = win_num
         photo.panel_letter = panel_letter
         photo.elevation = elevation
