@@ -145,6 +145,10 @@ export default function PhotosTab({ project, onRefresh }: Props) {
   const [pins, setPins] = useState<PhotoPin[]>([]);
   const [draggingPinId, setDraggingPinId] = useState<string | null>(null);
   const pinImageRef = useRef<HTMLImageElement | null>(null);
+  const [dimWidth, setDimWidth] = useState('');
+  const [dimHeight, setDimHeight] = useState('');
+  const [dimDepth, setDimDepth] = useState('');
+  const [savingDimensions, setSavingDimensions] = useState(false);
 
   const libraryInputRef = useRef<HTMLInputElement | null>(null);
   const cameraInputRef = useRef<HTMLInputElement | null>(null);
@@ -165,6 +169,24 @@ export default function PhotosTab({ project, onRefresh }: Props) {
   );
 
   const planMap = useMemo(() => new Map(queuePlans.map((plan) => [plan.id, plan])), [queuePlans]);
+
+  // Quick-pick dimension chips: every distinct width x height (x depth) combo
+  // already used somewhere in this project, most-used first, so staff never
+  // have to retype the same window size more than once.
+  const dimensionPresets = useMemo(() => {
+    const counts = new Map<string, { width: number; height: number; depth: number | null; count: number }>();
+    for (const photo of project.photos) {
+      if (photo.dim_width == null || photo.dim_height == null) continue;
+      const key = `${photo.dim_width}x${photo.dim_height}x${photo.dim_depth ?? ''}`;
+      const existing = counts.get(key);
+      if (existing) {
+        existing.count += 1;
+      } else {
+        counts.set(key, { width: photo.dim_width, height: photo.dim_height, depth: photo.dim_depth ?? null, count: 1 });
+      }
+    }
+    return Array.from(counts.values()).sort((a, b) => b.count - a.count).slice(0, 8);
+  }, [project.photos]);
 
   const uploadInFlight = queue.some((item) => item.status === 'uploading');
   const queuedCount = queue.filter((item) => item.status === 'queued').length;
@@ -231,6 +253,9 @@ export default function PhotosTab({ project, onRefresh }: Props) {
     setModalNote(modalPhoto?.notes ?? '');
     setInterimModalNote('');
     setPins(modalPhoto?.pins ?? []);
+    setDimWidth(modalPhoto?.dim_width != null ? String(modalPhoto.dim_width) : '');
+    setDimHeight(modalPhoto?.dim_height != null ? String(modalPhoto.dim_height) : '');
+    setDimDepth(modalPhoto?.dim_depth != null ? String(modalPhoto.dim_depth) : '');
   }, [modalPhoto?.id]);
 
   useEffect(() => {
@@ -492,6 +517,40 @@ export default function PhotosTab({ project, onRefresh }: Props) {
     } finally {
       setSavingElevation(false);
     }
+  };
+
+  // ── Dimensions ───────────────────────────────────────────────────────────────
+
+  const parseDim = (raw: string): number | null => {
+    const trimmed = raw.trim();
+    if (!trimmed) return null;
+    const value = Number(trimmed);
+    return Number.isFinite(value) ? value : null;
+  };
+
+  const commitDimensions = async (widthRaw = dimWidth, heightRaw = dimHeight, depthRaw = dimDepth) => {
+    if (!modalPhoto || savingDimensions) return;
+    setSavingDimensions(true);
+    try {
+      await api.updatePhoto(modalPhoto.id, {
+        dim_width: parseDim(widthRaw),
+        dim_height: parseDim(heightRaw),
+        dim_depth: parseDim(depthRaw),
+      });
+      await onRefresh();
+    } finally {
+      setSavingDimensions(false);
+    }
+  };
+
+  const applyDimensionPreset = (preset: { width: number; height: number; depth: number | null }) => {
+    const widthStr = String(preset.width);
+    const heightStr = String(preset.height);
+    const depthStr = preset.depth != null ? String(preset.depth) : '';
+    setDimWidth(widthStr);
+    setDimHeight(heightStr);
+    setDimDepth(depthStr);
+    void commitDimensions(widthStr, heightStr, depthStr);
   };
 
   // Converts a click/drag position into a percentage relative to the actual
@@ -1010,6 +1069,59 @@ export default function PhotosTab({ project, onRefresh }: Props) {
                           </button>
                         </div>
                       ))}
+                    </div>
+                  ) : null}
+                </div>
+
+                <div className="rounded-2xl border border-black/10 p-4">
+                  <label className="label">Dimensions (inches)</label>
+                  <div className="mt-2 grid grid-cols-3 gap-2">
+                    <input
+                      type="number"
+                      inputMode="decimal"
+                      placeholder="Width"
+                      className="input h-9 text-sm"
+                      value={dimWidth}
+                      onChange={(event) => setDimWidth(event.target.value)}
+                      onBlur={() => void commitDimensions()}
+                    />
+                    <input
+                      type="number"
+                      inputMode="decimal"
+                      placeholder="Height"
+                      className="input h-9 text-sm"
+                      value={dimHeight}
+                      onChange={(event) => setDimHeight(event.target.value)}
+                      onBlur={() => void commitDimensions()}
+                    />
+                    <input
+                      type="number"
+                      inputMode="decimal"
+                      placeholder="Depth"
+                      className="input h-9 text-sm"
+                      value={dimDepth}
+                      onChange={(event) => setDimDepth(event.target.value)}
+                      onBlur={() => void commitDimensions()}
+                    />
+                  </div>
+                  {savingDimensions ? <p className="mt-1 text-xs text-ssg-muted">Saving…</p> : null}
+
+                  {dimensionPresets.length > 0 ? (
+                    <div className="mt-3 border-t border-black/10 pt-3">
+                      <p className="mb-2 text-xs text-ssg-muted">Reuse a size already used in this project:</p>
+                      <div className="flex flex-wrap gap-1.5">
+                        {dimensionPresets.map((preset) => (
+                          <button
+                            key={`${preset.width}x${preset.height}x${preset.depth ?? ''}`}
+                            type="button"
+                            onClick={() => applyDimensionPreset(preset)}
+                            className="inline-flex items-center gap-1 rounded-full border border-black/10 bg-ssg-light px-3 py-1 text-xs font-medium text-ssg-charcoal hover:border-ssg-green hover:text-ssg-green"
+                          >
+                            {preset.width}&Prime; x {preset.height}&Prime;{preset.depth != null ? ` x ${preset.depth}\u2033` : ''}
+                            {preset.count > 1 ? <span className="text-ssg-muted">&middot;{preset.count}</span> : null}
+                          </button>
+                        ))}
+                      </div>
                     </div>
                   ) : null}
                 </div>
