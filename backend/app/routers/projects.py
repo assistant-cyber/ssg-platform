@@ -1,4 +1,5 @@
 """Projects router."""
+import logging
 import random
 import string
 from datetime import datetime
@@ -14,6 +15,7 @@ from app.models import (
     Estimate,
     EstimateLineItem,
     Photo,
+    PhotoPin,
     Project,
     Proposal,
     Report,
@@ -23,6 +25,8 @@ from app.models import (
 from app.schemas import ProjectCreate, ProjectDetail, ProjectOut, ProjectUpdate
 from app.security import hash_pin
 from app.storage import storage
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["projects"])
 
@@ -229,6 +233,9 @@ def delete_project(
             EstimateLineItem.estimate_id.in_(estimate_ids)
         ).delete(synchronize_session=False)
 
+    db.query(PhotoPin).filter(PhotoPin.project_id == project_id).delete(
+        synchronize_session=False
+    )
     db.query(Photo).filter(Photo.project_id == project_id).delete(
         synchronize_session=False
     )
@@ -247,4 +254,13 @@ def delete_project(
     db.delete(project)
     db.commit()
 
-    storage.delete_project_files(project_id)
+    # The database deletion above already succeeded and been committed, so the
+    # project is gone regardless of what happens next. A failure cleaning up
+    # stored files (network hiccup, storage permissions, etc.) must not surface
+    # as a 500 to the caller and make it look like the deletion failed.
+    try:
+        storage.delete_project_files(project_id)
+    except Exception:
+        logger.exception(
+            "Failed to clean up stored files for deleted project %s", project_id
+        )
