@@ -111,6 +111,13 @@ class Photo(Base):
     # numbered pin placement (report appendix "Elevation Reference Photos"
     # pages), as opposed to an ordinary close-up window/panel photo.
     is_elevation = Column(Boolean, default=False, nullable=False)
+    # Physical window dimensions in inches, entered by staff after the photo
+    # is taken (separate from the shorthand-parsed panel/overall dims used for
+    # condition scoring). dim_depth is optional - most flat stained glass
+    # panels won't have one, but storm/protective glazing frames often do.
+    dim_width = Column(Float, nullable=True)
+    dim_height = Column(Float, nullable=True)
+    dim_depth = Column(Float, nullable=True)
 
     # Relationships
     project = relationship("Project", back_populates="photos")

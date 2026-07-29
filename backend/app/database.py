@@ -85,6 +85,18 @@ def _ensure_additive_columns() -> None:
                     f"NOT NULL DEFAULT {default_literal}"
                 ))
 
+        # dim_width/dim_height/dim_depth - manually-entered window dimensions
+        # (inches), separate from the shorthand-parsed condition dims.
+        dim_columns = {
+            "dim_width": numeric_type,
+            "dim_height": numeric_type,
+            "dim_depth": numeric_type,
+        }
+        with engine.begin() as conn:
+            for column_name, column_type in dim_columns.items():
+                if column_name not in photo_columns:
+                    conn.execute(text(f"ALTER TABLE photos ADD COLUMN {column_name} {column_type}"))
+
 
 def create_tables() -> None:
     """Import all models so their metadata is registered, then create tables."""

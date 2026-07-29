@@ -131,6 +131,9 @@ class PhotoOut(BaseModel):
     uploaded_by_id: Optional[str] = None
     sort_order: int
     is_elevation: bool = False
+    dim_width: Optional[float] = None
+    dim_height: Optional[float] = None
+    dim_depth: Optional[float] = None
     condition_data: Optional["ConditionDataOut"] = None
     pins: List["PhotoPinOut"] = []
 
@@ -141,6 +144,9 @@ class PhotoUpdate(BaseModel):
     taken_at: Optional[datetime] = None
     is_elevation: Optional[bool] = None
     elevation: Optional[str] = None
+    dim_width: Optional[float] = None
+    dim_height: Optional[float] = None
+    dim_depth: Optional[float] = None
 
 
 class PhotoDownloadRequest(BaseModel):
