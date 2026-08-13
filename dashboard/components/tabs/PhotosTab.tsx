@@ -16,6 +16,7 @@ import {
 } from 'lucide-react';
 import api, { type Photo, type PhotoPin, type ProjectDetail } from '@/lib/api';
 import { buildUploadDraftPlans } from '@/lib/photoNaming';
+import WindowGroupedGallery from '@/components/projects/WindowGroupedGallery';
 
 interface Props {
   project: ProjectDetail;
@@ -913,39 +914,12 @@ export default function PhotosTab({ project, onRefresh }: Props) {
               <p className="mt-2 text-[15px] text-ssg-muted">Add photos above and they will start uploading automatically.</p>
             </div>
           ) : (
-            <div className="grid grid-cols-2 gap-4 md:grid-cols-3 xl:grid-cols-4">
-              {project.photos.map((photo) => (
-                <div key={photo.id} className="card overflow-hidden text-left">
-                  <div className="relative aspect-[4/3] bg-ssg-light">
-                    <button type="button" onClick={() => openPhotoModal(photo)} className="block h-full w-full">
-                      <img src={api.mediaUrl(photo.thumbnail_url || photo.storage_url)} alt={displayPhotoLabel(photo)} className="h-full w-full object-cover" />
-                    </button>
-                    <button type="button" onClick={() => togglePhotoSelection(photo.id)} className={['absolute left-3 top-3 flex h-8 min-w-8 items-center justify-center rounded-full border px-2 text-xs font-semibold shadow-sm transition', selectedPhotoIds.includes(photo.id) ? 'border-ssg-green bg-ssg-green text-white' : 'border-black/10 bg-white/95 text-ssg-charcoal hover:border-ssg-green hover:text-ssg-green'].join(' ')} aria-label={selectedPhotoIds.includes(photo.id) ? 'Deselect photo' : 'Select photo'}>
-                      {selectedPhotoIds.includes(photo.id) ? 'Selected' : 'Select'}
-                    </button>
-                    <div className="absolute right-3 top-3 rounded-full bg-ssg-green p-1 text-white shadow"><CheckCircle2 size={14} /></div>
-                  </div>
-                  <div className="space-y-2 p-3">
-                    <div className="flex items-center gap-2">
-                      <div className="rounded-full bg-ssg-light px-2.5 py-1 text-xs font-semibold text-ssg-green">{displayPhotoLabel(photo)}</div>
-                    </div>
-                    {/* Note button — opens full modal with voice + auto-save */}
-                    <button
-                      type="button"
-                      onClick={() => openPhotoModal(photo)}
-                      className="flex w-full items-center gap-2 rounded-xl border border-black/8 bg-white px-3 py-2.5 text-left text-sm transition hover:border-ssg-green"
-                    >
-                      <Mic size={13} className="shrink-0 text-ssg-green" />
-                      {photo.notes ? (
-                        <span className="line-clamp-2 text-ssg-charcoal">{photo.notes}</span>
-                      ) : (
-                        <span className="italic text-ssg-muted">Add note</span>
-                      )}
-                    </button>
-                  </div>
-                </div>
-              ))}
-            </div>
+            <WindowGroupedGallery
+              photos={project.photos}
+              selectedPhotoIds={selectedPhotoIds}
+              onPhotoClick={openPhotoModal}
+              onToggleSelection={togglePhotoSelection}
+            />
           )}
         </section>
       </div>
