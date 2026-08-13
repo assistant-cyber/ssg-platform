@@ -217,30 +217,32 @@ def _make_unique_filename(
         counter += 1
 
 
-def _photo_download_path(photo: Photo, used_paths: set[str]) -> str:
-    """Path used inside the downloaded zip: one folder per window number.
+def _photo_download_path_with_label(photo_id: str, label: str, filename: str, used_paths: set[str]) -> str:
+    """Path used inside the downloaded zip: flat structure with {label}.{ext} filenames.
 
-    Each window gets its own folder named after its number ("1", "2", ...).
-    Inside that folder, the window's bare/overall first photo is named after
-    the window number itself ("1.jpg"), and every subsequent panel is named
-    after just its letter ("a.jpg", "b.jpg", ...) - the folder already
-    conveys the window number, so the filename doesn't repeat it. Names are
-    always derived strictly from the window number / panel letter label -
-    never from the note text or the original camera filename. Letter case is
-    used exactly as stored (never re-cased here), so older projects with
-    uppercase panel letters (e.g. "1A") still nest correctly as "1/A.jpg"
-    alongside newer lowercase ones. Falls back to a flat sequential name only
-    when a photo has no window number at all.
+    Phase 4: Filenames derived from Window structure (window_id + chronological lettering).
+    Format: {label}.jpg (e.g. 1a.jpg, 1b.jpg, ..., 2a.jpg, ...).
+    Site/elevation photos (no window_id) keep directional labels (North.jpg, South.jpg, site_notes.jpg).
+    
+    Args:
+        photo_id: Photo ID (for fallback)
+        label: Computed label from Window structure (e.g. "1a", "1b", "North")
+        filename: Original filename (for extension extraction)
+        used_paths: Set of already-used paths for deduplication
+        
+    Returns:
+        Unique path string (e.g. "1a.jpg" or "North.jpg")
     """
-    extension = Path(photo.original_filename or photo.storage_url).suffix or ".jpg"
-
-    if photo.window_number:
-        folder = photo.window_number
-        base_name = (photo.panel_letter or "").strip() or photo.window_number
-        candidate_path = f"{folder}/{base_name}{extension}"
+    extension = Path(filename or ".jpg").suffix or ".jpg"
+    
+    if label:
+        candidate_path = f"{label}{extension}"
     else:
-        candidate_path = f"photo_{photo.sort_order + 1:03d}{extension}"
-
+        # Fallback: use photo ID prefix (should not happen in production)
+        from processing.photo_naming import _id_stem
+        candidate_path = f"photo_{_id_stem(photo_id)}{extension}"
+    
+    # Handle collisions
     stem = candidate_path[: -len(extension)] if extension and candidate_path.endswith(extension) else candidate_path
     counter = 2
     final_path = candidate_path
@@ -255,31 +257,119 @@ def _photo_bytes(photo: Photo) -> bytes:
     return storage.download_bytes(photo.storage_url)
 
 
-def _photo_sort_key(photo: Photo):
-    """Sort key: window number numerically, then panel letter alphabetically."""
-    try:
-        win = int(photo.window_number) if photo.window_number else 99999
-    except (ValueError, TypeError):
-        win = 99999
-    panel = (photo.panel_letter or "").lower()
-    return (win, panel)
-
-
 def _archive_response(photos: list[Photo], archive_filename: str, folder_name: str = "") -> StreamingResponse:
+    """Build a ZIP archive of photos using Window-based naming.
+    
+    Phase 4: Queries windows with photos, computes labels from Window structure,
+    generates filenames via photo_naming.generate_filenames_for_photos().
+    Photos are sorted by window number (numeric) and letter (chronological) order.
+    """
+    from processing.photo_naming import generate_filenames_for_photos, generate_filenames_for_unassigned_photos
+    from app.models import Window
+    from app.database import get_db
+    
     archive_buffer = io.BytesIO()
     used_paths: set[str] = set()
-
-    # Sort photos: window number numerically, then panel letter a->z (bare
-    # labels sort first within a window, since "" < any letter).
-    sorted_photos = sorted(photos, key=_photo_sort_key)
-
-    prefix = f"{folder_name}/" if folder_name else ""
-
-    with zipfile.ZipFile(archive_buffer, "w", compression=zipfile.ZIP_DEFLATED) as archive:
+    
+    # Group photos by window_id (None for unassigned site/elevation photos)
+    photos_by_window: dict[Optional[str], list[Photo]] = {}
+    for photo in photos:
+        window_id = photo.window_id
+        if window_id not in photos_by_window:
+            photos_by_window[window_id] = []
+        photos_by_window[window_id].append(photo)
+    
+    # Get window metadata for windowed photos
+    window_ids = [wid for wid in photos_by_window.keys() if wid is not None]
+    windows_by_id: dict[str, Window] = {}
+    
+    if window_ids:
+        # Need a DB session - create one for this context
+        from app.database import SessionLocal
+        db = SessionLocal()
+        try:
+            windows = db.query(Window).filter(Window.id.in_(window_ids)).all()
+            windows_by_id = {w.id: w for w in windows}
+        finally:
+            db.close()
+    
+    # Build windows structure for photo_naming functions
+    windows_data = []
+    for window_id, window_photos in sorted(photos_by_window.items(), key=lambda x: (x[0] is None, x[0])):
+        if window_id is None:
+            continue  # Handle unassigned photos separately
+        
+        window = windows_by_id.get(window_id)
+        if not window:
+            continue
+        
+        # Sort photos chronologically within window (same ordering as windows router)
+        sorted_photos = sorted(
+            window_photos,
+            key=lambda p: (p.captured_at or '9999-12-31T23:59:59Z', p.capture_sequence or 0, p.uploaded_at or '9999-12-31T23:59:59Z')
+        )
+        
+        photos_dicts = []
         for photo in sorted_photos:
-            path = _photo_download_path(photo, used_paths)
+            photos_dicts.append({
+                'id': photo.id,
+                'label': None,  # Will be computed by photo_naming
+                'letter_override': photo.letter_override,
+                'filename': photo.original_filename or photo.storage_url,
+                'captured_at': photo.captured_at,
+                'capture_sequence': photo.capture_sequence,
+                'uploaded_at': photo.uploaded_at,
+            })
+        
+        windows_data.append({
+            'number': window.number,
+            'photos': photos_dicts,
+        })
+    
+    # Generate filenames for windowed photos
+    photo_id_to_filename: dict[str, str] = {}
+    filenames_list = generate_filenames_for_photos(windows_data)
+    for photo_id, filename in filenames_list:
+        photo_id_to_filename[photo_id] = filename
+    
+    # Generate filenames for unassigned photos (site/elevation)
+    unassigned_photos = photos_by_window.get(None, [])
+    if unassigned_photos:
+        unassigned_dicts = [
+            {
+                'id': photo.id,
+                'notes': photo.notes or '',
+                'filename': photo.original_filename or photo.storage_url,
+            }
+            for photo in unassigned_photos
+        ]
+        unassigned_filenames = generate_filenames_for_unassigned_photos(unassigned_dicts)
+        for photo_id, filename in unassigned_filenames:
+            photo_id_to_filename[photo_id] = filename
+    
+    # Build ZIP
+    prefix = f"{folder_name}/" if folder_name else ""
+    
+    with zipfile.ZipFile(archive_buffer, "w", compression=zipfile.ZIP_DEFLATED) as archive:
+        for photo in photos:
+            filename = photo_id_to_filename.get(photo.id)
+            if not filename:
+                # Fallback (should not happen)
+                from processing.photo_naming import _id_stem
+                ext = Path(photo.original_filename or photo.storage_url).suffix or ".jpg"
+                filename = f"photo_{_id_stem(photo.id)}{ext}"
+            
+            # Ensure unique path in ZIP
+            path = filename
+            stem = path[: -len(Path(path).suffix)] if Path(path).suffix else path
+            counter = 2
+            while path in used_paths:
+                path = f"{stem}_{counter}{Path(filename).suffix}"
+                counter += 1
+            used_paths.add(path)
+            
             archive.writestr(f"{prefix}{path}", _photo_bytes(photo))
-
+    
     archive_buffer.seek(0)
     return StreamingResponse(
         archive_buffer,

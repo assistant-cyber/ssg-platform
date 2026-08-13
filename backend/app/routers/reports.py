@@ -81,11 +81,61 @@ def _photo_local_path(photo: Photo, cache_dir: Path) -> str:
 
 
 def _photos_to_dicts(photos, cache_dir: Path):
-    """Convert Photo ORM objects to dicts for processing modules."""
+    """Convert Photo ORM objects to dicts for processing modules.
+    
+    Phase 4: Includes window_id and computed label from Window structure.
+    """
+    from app.models import Window
+    from app.photo_lettering import compute_label_for_photo
+    
+    # Group photos by window_id to compute labels
+    photos_by_window_id = {}
+    window_ids = set()
+    for p in photos:
+        wid = p.window_id
+        if wid:
+            window_ids.add(wid)
+        if wid not in photos_by_window_id:
+            photos_by_window_id[wid] = []
+        photos_by_window_id[wid].append(p)
+    
+    # Get window numbers for label computation
+    from app.database import SessionLocal
+    db = SessionLocal()
+    try:
+        windows = db.query(Window).filter(Window.id.in_(list(window_ids))).all() if window_ids else []
+        window_numbers = {w.id: w.number for w in windows}
+    finally:
+        db.close()
+    
     result = []
     for p in photos:
+        # Compute label if photo has a window
+        label = None
+        if p.window_id and p.window_id in window_numbers:
+            window_number = window_numbers[p.window_id]
+            # Find position of this photo within its window
+            window_photos = photos_by_window_id.get(p.window_id, [])
+            # Sort by same criteria as windows router
+            sorted_window_photos = sorted(
+                window_photos,
+                key=lambda ph: (
+                    ph.captured_at or '9999-12-31T23:59:59Z',
+                    ph.capture_sequence or 0,
+                    ph.uploaded_at or '9999-12-31T23:59:59Z'
+                )
+            )
+            position = next((i for i, ph in enumerate(sorted_window_photos) if ph.id == p.id), 0)
+            label = compute_label_for_photo(
+                {"letter_override": p.letter_override},
+                window_number,
+                position
+            )
+        
         result.append({
             "id": p.id,
+            "window_id": p.window_id,
+            "label": label,
             "notes": p.notes or "",
             "local_path": _photo_local_path(p, cache_dir),
             "storage_url": p.storage_url,
@@ -499,15 +549,29 @@ def _generate_report_task(
         if not report:
             return
 
-        # Only download / process the photos the report actually uses. For
-        # projects with hundreds of photos this used to take 5+ minutes
-        # (and frequently OOM-killed the Railway worker) because every
-        # photo was materialized to local disk even though only the cover
-        # and the section selections end up in the PDF.
+        # Query windows with photos in the same order as windows router:
+        # Windows by sort_order/number, photos by captured_at/capture_sequence/uploaded_at
+        from app.models import Window
+        
+        windows = (
+            db.query(Window)
+            .filter(Window.project_id == project_id)
+            .order_by(Window.sort_order, Window.number)
+            .all()
+        )
+        
+        # Collect all photos (windowed + unassigned) for the condition sheet
         all_photos = (
             db.query(Photo)
             .filter(Photo.project_id == project_id)
-            .order_by(Photo.sort_order)
+            .outerjoin(Window, Photo.window_id == Window.id)
+            .order_by(
+                Window.sort_order.nullslast(),
+                Window.number.nullslast(),
+                Photo.captured_at,
+                Photo.capture_sequence,
+                Photo.uploaded_at
+            )
             .all()
         )
         used_photo_ids = _extract_used_photo_ids(narrative, all_photos)
