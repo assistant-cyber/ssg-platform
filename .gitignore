@@ -33,3 +33,5 @@ mobile/android/
 mobile/ios/
 .vercel
 .env
+dashboard/tsconfig.tsbuildinfo
+ssg.db
