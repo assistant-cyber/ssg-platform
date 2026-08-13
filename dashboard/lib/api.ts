@@ -268,7 +268,7 @@ class ApiClient {
   // ── Photo pins (elevation photo annotations) ────────────────────────────────
   async createPin(
     photoId: string,
-    data: { x_pct: number; y_pct: number; label: string; color: PhotoPin['color']; sort_order?: number },
+    data: { x_pct: number; y_pct: number; label?: string; color: PhotoPin['color']; sort_order?: number },
   ): Promise<PhotoPin> {
     return this.request('POST', `/photos/${photoId}/pins`, data);
   }
@@ -282,6 +282,10 @@ class ApiClient {
 
   async deletePin(pinId: string): Promise<void> {
     return this.request('DELETE', `/photo-pins/${pinId}`);
+  }
+
+  async renumberPins(photoId: string): Promise<PhotoPin[]> {
+    return this.request('POST', `/photos/${photoId}/pins/renumber`);
   }
 
   async deletePhoto(id: string): Promise<void> {

@@ -144,6 +144,7 @@ export default function PhotosTab({ project, onRefresh }: Props) {
   const [savingElevation, setSavingElevation] = useState(false);
   const [pins, setPins] = useState<PhotoPin[]>([]);
   const [draggingPinId, setDraggingPinId] = useState<string | null>(null);
+  const [lastPinId, setLastPinId] = useState<string | null>(null);  // For undo
   const pinImageRef = useRef<HTMLImageElement | null>(null);
   const [dimWidth, setDimWidth] = useState('');
   const [dimHeight, setDimHeight] = useState('');
@@ -586,12 +587,12 @@ export default function PhotosTab({ project, onRefresh }: Props) {
     };
   };
 
-  const handlePinImageClick = async (event: ReactMouseEvent<HTMLImageElement>) => {
+  const handlePinImageClick = async (event: ReactMouseEvent<HTMLDivElement>) => {
     if (!modalPhoto?.is_elevation || draggingPinId) return;
     const point = percentFromPointer(event.clientX, event.clientY);
     if (!point) return;
 
-    const nextLabel = String(pins.length + 1);
+    // Optimistic pin with pending state (reduced opacity, no label yet)
     const optimisticId = `pending-${Date.now()}`;
     const optimisticPin: PhotoPin = {
       id: optimisticId,
@@ -599,20 +600,22 @@ export default function PhotosTab({ project, onRefresh }: Props) {
       project_id: modalPhoto.project_id,
       x_pct: point.x_pct,
       y_pct: point.y_pct,
-      label: nextLabel,
+      label: '?',  // Pending state; server assigns actual label
       color: 'red',
-      sort_order: pins.length,
+      sort_order: 0,  // Server assigns actual sort_order
     };
     setPins((current) => [...current, optimisticPin]);
     try {
+      // Server assigns label and sort_order atomically
       const saved = await api.createPin(modalPhoto.id, {
         x_pct: point.x_pct,
         y_pct: point.y_pct,
-        label: nextLabel,
+        label: undefined,  // Let server assign next label
         color: 'red',
-        sort_order: pins.length,
+        sort_order: undefined,  // Let server assign sort_order
       });
       setPins((current) => current.map((pin) => (pin.id === optimisticId ? saved : pin)));
+      setLastPinId(saved.id);  // Track for undo
       onRefresh();
     } catch {
       setPins((current) => current.filter((pin) => pin.id !== optimisticId));
@@ -644,11 +647,36 @@ export default function PhotosTab({ project, onRefresh }: Props) {
 
   const deletePin = async (pinId: string) => {
     setPins((current) => current.filter((pin) => pin.id !== pinId));
+    if (pinId === lastPinId) setLastPinId(null);
     try {
       await api.deletePin(pinId);
       onRefresh();
     } catch {
       // Non-fatal - a stale pin left in local state can be removed again on next open.
+    }
+  };
+
+  const undoLastPin = async () => {
+    if (!lastPinId) return;
+    await deletePin(lastPinId);
+    setLastPinId(null);
+  };
+
+  const renumberPins = async () => {
+    if (!modalPhoto) return;
+    const confirmed = window.confirm(
+      'Renumber all pins to 1, 2, 3...?\n\n' +
+      'This will compact labels after deletions. ' +
+      'Voice notes referencing old pin numbers will be stale.'
+    );
+    if (!confirmed) return;
+    try {
+      const updated = await api.renumberPins(modalPhoto.id);
+      setPins(updated);
+      setLastPinId(null);
+      onRefresh();
+    } catch (error) {
+      window.alert(errorMessage(error));
     }
   };
 
@@ -962,22 +990,26 @@ export default function PhotosTab({ project, onRefresh }: Props) {
                   onClick={(event) => void handlePinImageClick(event)}
                   className={['h-[42vh] w-full object-contain md:h-[76vh]', modalPhoto.is_elevation ? 'cursor-crosshair' : ''].join(' ')}
                 />
-                {modalPhoto.is_elevation ? pins.map((pin) => (
-                  <button
-                    key={pin.id}
-                    type="button"
-                    onPointerDown={(event) => handlePinPointerDown(event, pin.id)}
-                    style={{
-                      left: `${pin.x_pct}%`,
-                      top: `${pin.y_pct}%`,
-                      backgroundColor: PIN_COLOR_HEX[pin.color] ?? PIN_COLOR_HEX.red,
-                    }}
-                    className="absolute z-20 flex h-7 w-7 -translate-x-1/2 -translate-y-1/2 cursor-grab items-center justify-center rounded-full border-2 border-white text-xs font-bold text-white shadow active:cursor-grabbing"
-                    title={`Pin ${pin.label} - drag to reposition`}
-                  >
-                    {pin.label}
-                  </button>
-                )) : null}
+                {modalPhoto.is_elevation ? pins.map((pin) => {
+                  const isPending = pin.id.startsWith('pending-');
+                  return (
+                    <button
+                      key={pin.id}
+                      type="button"
+                      onPointerDown={(event) => handlePinPointerDown(event, pin.id)}
+                      style={{
+                        left: `${pin.x_pct}%`,
+                        top: `${pin.y_pct}%`,
+                        backgroundColor: PIN_COLOR_HEX[pin.color] ?? PIN_COLOR_HEX.red,
+                        opacity: isPending ? 0.5 : 1,
+                      }}
+                      className="absolute z-20 flex h-8 w-8 min-w-[32px] -translate-x-1/2 -translate-y-1/2 cursor-grab items-center justify-center rounded-full border-2 border-white text-xs font-bold text-white shadow active:cursor-grabbing"
+                      title={isPending ? 'Creating pin...' : `Pin ${pin.label} - drag to reposition`}
+                    >
+                      {pin.label}
+                    </button>
+                  );
+                }) : null}
                 {modalPhoto.is_elevation ? (
                   <div className="pointer-events-none absolute bottom-3 left-1/2 z-10 -translate-x-1/2 rounded-full bg-black/60 px-3 py-1 text-xs text-white">
                     Click the photo to drop a numbered pin
@@ -1035,40 +1067,61 @@ export default function PhotosTab({ project, onRefresh }: Props) {
                       </label>
                       {pins.length === 0 ? (
                         <p className="text-xs text-ssg-muted">No pins yet - click anywhere on the photo to add one.</p>
-                      ) : pins.map((pin) => (
-                        <div key={pin.id} className="flex items-center gap-2">
-                          <span
-                            className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-[11px] font-bold text-white"
-                            style={{ backgroundColor: PIN_COLOR_HEX[pin.color] ?? PIN_COLOR_HEX.red }}
-                          >
-                            {pin.label}
-                          </span>
-                          <input
-                            className="input h-9 min-w-0 flex-1 text-sm"
-                            value={pin.label}
-                            onChange={(event) => updatePinLabel(pin.id, event.target.value)}
-                            onBlur={(event) => void commitPinLabel(pin.id, event.target.value)}
-                            placeholder="Window label"
-                          />
-                          <select
-                            className="input h-9 w-28 text-sm"
-                            value={pin.color}
-                            onChange={(event) => void updatePinColor(pin.id, event.target.value as PhotoPin['color'])}
-                          >
-                            {PIN_COLORS.map((color) => (
-                              <option key={color} value={color}>{color[0].toUpperCase() + color.slice(1)}</option>
-                            ))}
-                          </select>
-                          <button
-                            type="button"
-                            onClick={() => void deletePin(pin.id)}
-                            className="rounded-full p-1.5 text-ssg-muted hover:bg-red-50 hover:text-red-600"
-                            aria-label="Delete pin"
-                          >
-                            <Trash2 size={14} />
-                          </button>
-                        </div>
-                      ))}
+                      ) : (
+                        <>
+                          {pins.map((pin) => (
+                            <div key={pin.id} className="flex items-center gap-2">
+                              <span
+                                className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-[11px] font-bold text-white"
+                                style={{ backgroundColor: PIN_COLOR_HEX[pin.color] ?? PIN_COLOR_HEX.red }}
+                              >
+                                {pin.label}
+                              </span>
+                              <input
+                                className="input h-9 min-w-0 flex-1 text-sm"
+                                value={pin.label}
+                                onChange={(event) => updatePinLabel(pin.id, event.target.value)}
+                                onBlur={(event) => void commitPinLabel(pin.id, event.target.value)}
+                                placeholder="Window label"
+                              />
+                              <select
+                                className="input h-9 w-28 text-sm"
+                                value={pin.color}
+                                onChange={(event) => void updatePinColor(pin.id, event.target.value as PhotoPin['color'])}
+                              >
+                                {PIN_COLORS.map((color) => (
+                                  <option key={color} value={color}>{color[0].toUpperCase() + color.slice(1)}</option>
+                                ))}
+                              </select>
+                              <button
+                                type="button"
+                                onClick={() => void deletePin(pin.id)}
+                                className="rounded-full p-1.5 text-ssg-muted hover:bg-red-50 hover:text-red-600"
+                                aria-label="Delete pin"
+                              >
+                                <Trash2 size={14} />
+                              </button>
+                            </div>
+                          ))}
+                          <div className="flex gap-2 border-t border-black/10 pt-3">
+                            <button
+                              type="button"
+                              onClick={() => void undoLastPin()}
+                              disabled={!lastPinId}
+                              className="btn-secondary flex-1 text-xs disabled:opacity-40"
+                            >
+                              Undo last pin
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => void renumberPins()}
+                              className="btn-secondary flex-1 text-xs"
+                            >
+                              Renumber pins
+                            </button>
+                          </div>
+                        </>
+                      )}
                     </div>
                   ) : null}
                 </div>

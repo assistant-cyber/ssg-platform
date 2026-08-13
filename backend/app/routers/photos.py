@@ -721,10 +721,38 @@ def create_photo_pin(
     current_user: User = Depends(require_staff),
     db: Session = Depends(get_db),
 ):
-    """Place a new numbered pin on an elevation/exterior photo."""
+    """Place a new numbered pin on an elevation/exterior photo.
+    
+    Server assigns next_label = (max numeric label) + 1 atomically when label is None.
+    Server assigns sort_order = (max sort_order) + 1 atomically when sort_order is None.
+    Labels are stable once assigned; deletes do NOT renumber.
+    """
     photo = db.query(Photo).filter(Photo.id == photo_id).first()
     if not photo:
         raise HTTPException(status_code=404, detail="Photo not found")
+
+    # Atomic label assignment: compute next label server-side inside transaction
+    if body.label is None:
+        # Find max numeric label among existing pins for this photo
+        existing_labels = db.query(PhotoPin.label).filter(PhotoPin.photo_id == photo_id).all()
+        numeric_labels = []
+        for (label_str,) in existing_labels:
+            try:
+                numeric_labels.append(int(label_str))
+            except (ValueError, TypeError):
+                pass  # Skip non-numeric labels
+        next_label = str(max(numeric_labels, default=0) + 1)
+    else:
+        next_label = body.label
+
+    # Atomic sort_order assignment
+    if body.sort_order is None:
+        max_sort = db.query(PhotoPin.sort_order).filter(PhotoPin.photo_id == photo_id).order_by(
+            PhotoPin.sort_order.desc()
+        ).first()
+        next_sort_order = (max_sort[0] + 1) if max_sort and max_sort[0] is not None else 0
+    else:
+        next_sort_order = body.sort_order
 
     pin = PhotoPin(
         id=new_uuid(),
@@ -732,9 +760,9 @@ def create_photo_pin(
         project_id=photo.project_id,
         x_pct=body.x_pct,
         y_pct=body.y_pct,
-        label=body.label,
+        label=next_label,
         color=body.color,
-        sort_order=body.sort_order,
+        sort_order=next_sort_order,
     )
     db.add(pin)
     db.commit()
@@ -769,9 +797,38 @@ def delete_photo_pin(
     current_user: User = Depends(require_staff),
     db: Session = Depends(get_db),
 ):
-    """Remove a pin."""
+    """Remove a pin. Labels are stable; this does NOT renumber remaining pins."""
     pin = db.query(PhotoPin).filter(PhotoPin.id == pin_id).first()
     if not pin:
         raise HTTPException(status_code=404, detail="Pin not found")
     db.delete(pin)
     db.commit()
+
+
+@router.post("/photos/{photo_id}/pins/renumber", response_model=list[PhotoPinOut])
+def renumber_photo_pins(
+    photo_id: str,
+    current_user: User = Depends(require_staff),
+    db: Session = Depends(get_db),
+):
+    """Renumber all pins for a photo, compacting labels to 1..N in sort_order.
+    
+    Use this when you want a clean sheet after deletions have left gaps in numbering.
+    Labels will change, so estimators' voice notes referencing old labels will be stale.
+    """
+    photo = db.query(Photo).filter(Photo.id == photo_id).first()
+    if not photo:
+        raise HTTPException(status_code=404, detail="Photo not found")
+    
+    pins = db.query(PhotoPin).filter(PhotoPin.photo_id == photo_id).order_by(
+        PhotoPin.sort_order, PhotoPin.created_at
+    ).all()
+    
+    for idx, pin in enumerate(pins, start=1):
+        pin.label = str(idx)
+    
+    db.commit()
+    for pin in pins:
+        db.refresh(pin)
+    
+    return [PhotoPinOut.model_validate(pin) for pin in pins]

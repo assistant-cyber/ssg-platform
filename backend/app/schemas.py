@@ -196,9 +196,9 @@ class PhotoDownloadRequest(BaseModel):
 class PhotoPinCreate(BaseModel):
     x_pct: float = Field(..., ge=0, le=100)
     y_pct: float = Field(..., ge=0, le=100)
-    label: str = ""
+    label: Optional[str] = None  # Server assigns next label if None
     color: str = Field(default="red", pattern="^(red|blue|green|purple|orange)$")
-    sort_order: int = 0
+    sort_order: Optional[int] = None  # Server assigns max+1 if None
 
 
 class PhotoPinUpdate(BaseModel):
