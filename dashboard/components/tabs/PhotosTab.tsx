@@ -647,6 +647,7 @@ export default function PhotosTab({ project, onRefresh }: Props) {
   };
 
   const deletePin = async (pinId: string) => {
+    if (!window.confirm('Delete this pin?')) return;
     setPins((current) => current.filter((pin) => pin.id !== pinId));
     if (pinId === lastPinId) setLastPinId(null);
     try {
