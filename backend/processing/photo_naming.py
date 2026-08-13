@@ -245,8 +245,11 @@ def generate_filenames_for_photos(
     
     filenames: List[Tuple[str, str]] = []
     
-    # Sort windows by number
-    sorted_windows = sorted(windows, key=lambda w: w.get('number', 999))
+    # Sort windows by number (None-numbered windows sort last)
+    sorted_windows = sorted(
+        windows,
+        key=lambda w: (w.get('number') is None, w.get('number') or 0),
+    )
     
     for window in sorted_windows:
         window_number = window.get('number')
@@ -264,8 +267,16 @@ def generate_filenames_for_photos(
                 if len(stem_ext) == 2 and stem_ext[1]:
                     photo_ext = '.' + stem_ext[1].lower()
             
-            # Use the pre-computed label from photo_lettering
+            # Use the pre-computed label if provided; otherwise derive it
+            # from letter_override / chronological position so callers can
+            # pass raw ORM-shaped dicts without pre-computing labels.
             label = photo.get('label')
+            if not label and window_number is not None:
+                override = photo.get('letter_override')
+                if override:
+                    label = f"{window_number}{override}"
+                else:
+                    label = f"{window_number}{compute_letter(idx)}"
             if label:
                 filename = f"{label}{photo_ext}"
             else:

@@ -148,7 +148,6 @@ def test_window_based_naming_out_of_order_captures(db_session, test_project):
     db_session.commit()
     
     # Query windows with photos (same ordering as windows router)
-    from app.models import Window
     windows = (
         db_session.query(Window)
         .filter(Window.project_id == test_project.id)

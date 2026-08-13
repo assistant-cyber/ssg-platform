@@ -144,19 +144,30 @@ class TestWindowBasedNaming:
         ]
     
     def test_photo_without_label_fallback(self):
-        """Test fallback for photos without labels (edge case)."""
+        """Photos without a pre-computed label derive one from window + position;
+        the ID-prefix fallback only applies when no window number exists."""
+        # In a numbered window: label derived from position → 1a
         windows = [
             {
                 'number': 1,
                 'photos': [
-                    {'id': 'photo_abc123def456', 'label': None},  # No label
+                    {'id': 'photo_abc123def456', 'label': None},
                 ],
             }
         ]
-        
         result = generate_filenames_for_photos(windows)
-        
-        # Should use photo ID prefix as fallback
+        assert result == [('photo_abc123def456', '1a.jpg')]
+
+        # Without a window number: fall back to ID prefix (no doubled 'photo_')
+        windows_no_number = [
+            {
+                'number': None,
+                'photos': [
+                    {'id': 'photo_abc123def456', 'label': None},
+                ],
+            }
+        ]
+        result = generate_filenames_for_photos(windows_no_number)
         assert result == [('photo_abc123def456', 'photo_abc123de.jpg')]
     
     def test_empty_windows_list(self):
