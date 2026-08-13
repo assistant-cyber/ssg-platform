@@ -205,6 +205,16 @@ def extract_label_parts(notes: str) -> Tuple[Optional[str], Optional[str]]:
 
 # ─── Filename generation (Window-based) ───────────────────────────────────────
 
+def _id_stem(photo_id: str, length: int = 8) -> str:
+    """Return a short stem from a photo ID for fallback filenames.
+
+    Strips a leading 'photo_'/'photo-' prefix first so the fallback name
+    never becomes 'photo_photo_...'.
+    """
+    stem = re.sub(r'^photo[_-]', '', photo_id or '')
+    return (stem or photo_id or 'unknown')[:length]
+
+
 def generate_filenames_for_photos(
     windows: List[dict],
     ext: str = ".jpg",
@@ -260,7 +270,7 @@ def generate_filenames_for_photos(
                 filename = f"{label}{photo_ext}"
             else:
                 # Fallback: photo has no label (should not happen in production)
-                filename = f"photo_{photo_id[:8]}{photo_ext}"
+                filename = f"photo_{_id_stem(photo_id)}{photo_ext}"
             
             filenames.append((photo_id, filename))
     
@@ -313,6 +323,6 @@ def generate_filenames_for_unassigned_photos(
             continue
         
         # Fallback: use photo ID prefix
-        filenames.append((photo_id, f"photo_{photo_id[:8]}{photo_ext}"))
+        filenames.append((photo_id, f"photo_{_id_stem(photo_id)}{photo_ext}"))
     
     return filenames
