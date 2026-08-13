@@ -20,27 +20,33 @@ import api, { Project } from '@/services/api';
 import Colors from '@/constants/Colors';
 import { ProjectCard } from '@/components/ProjectCard';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { useMounted } from '@/hooks/useMounted';
 
 export default function ProjectListScreen() {
   const { user, logout } = useAuth();
   const [projects, setProjects] = useState<Project[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+  const isMounted = useMounted();
 
   const fetchProjects = useCallback(async (silent = false) => {
     if (!silent) setLoading(true);
     try {
       const data = await api.listProjects();
+      if (!isMounted.current) return;
       setProjects(data);
     } catch (err: any) {
+      if (!isMounted.current) return;
       if (!silent) {
         Alert.alert('Connection Error', err.message ?? 'Could not load projects.');
       }
     } finally {
-      setLoading(false);
-      setRefreshing(false);
+      if (isMounted.current) {
+        setLoading(false);
+        setRefreshing(false);
+      }
     }
-  }, []);
+  }, [isMounted]);
 
   // Reload every time this screen comes into focus (e.g. after creating a project)
   useFocusEffect(

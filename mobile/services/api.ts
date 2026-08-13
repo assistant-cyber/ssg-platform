@@ -123,24 +123,48 @@ class ApiClient {
     method: string,
     path: string,
     body?: unknown,
+    options?: { timeout?: number },
   ): Promise<T> {
-    const res = await fetch(`${BASE_URL}${path}`, {
-      method,
-      headers: this.headers(),
-      body: body !== undefined ? JSON.stringify(body) : undefined,
-    });
+    const timeout = options?.timeout ?? 30000; // 30s default
 
-    if (!res.ok) {
-      let detail = `HTTP ${res.status}`;
-      try {
-        const err = await res.json();
-        detail = err.detail ?? detail;
-      } catch {}
-      throw new Error(detail);
+    // AbortController for timeout
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), timeout);
+
+    try {
+      const res = await fetch(`${BASE_URL}${path}`, {
+        method,
+        headers: this.headers(),
+        body: body !== undefined ? JSON.stringify(body) : undefined,
+        signal: controller.signal,
+      });
+
+      clearTimeout(timer);
+
+      // 401 handler — clear token and route to login
+      if (res.status === 401) {
+        this.setToken(null);
+        throw new Error('Session expired. Please log in again.');
+      }
+
+      if (!res.ok) {
+        let detail = `HTTP ${res.status}`;
+        try {
+          const err = await res.json();
+          detail = err.detail ?? detail;
+        } catch {}
+        throw new Error(detail);
+      }
+
+      if (res.status === 204) return undefined as T;
+      return res.json() as Promise<T>;
+    } catch (error: any) {
+      clearTimeout(timer);
+      if (error.name === 'AbortError') {
+        throw new Error('Request timed out. Check your connection and try again.');
+      }
+      throw error;
     }
-
-    if (res.status === 204) return undefined as T;
-    return res.json() as Promise<T>;
   }
 
   // ── Auth ──────────────────────────────────────────────────────────────────
@@ -221,39 +245,58 @@ class ApiClient {
     notes: string,
     takenAt?: string,
   ): Promise<Photo> {
-    const formData = new FormData();
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 60000); // 60s for uploads
 
-    // React Native FormData accepts {uri, type, name} for files
-    formData.append('file', {
-      uri: photoUri,
-      type: 'image/jpeg',
-      name: 'photo.jpg',
-    } as unknown as Blob);
+    try {
+      const formData = new FormData();
 
-    formData.append('notes', notes);
-    if (takenAt) {
-      formData.append('taken_at', takenAt);
+      // React Native FormData accepts {uri, type, name} for files
+      formData.append('file', {
+        uri: photoUri,
+        type: 'image/jpeg',
+        name: 'photo.jpg',
+      } as unknown as Blob);
+
+      formData.append('notes', notes);
+      if (takenAt) {
+        formData.append('taken_at', takenAt);
+      }
+
+      const res = await fetch(`${BASE_URL}/projects/${projectId}/photos`, {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${this.token}`,
+          // Note: do NOT set Content-Type manually for multipart — fetch sets it with boundary
+        },
+        body: formData,
+        signal: controller.signal,
+      });
+
+      clearTimeout(timer);
+
+      if (res.status === 401) {
+        this.setToken(null);
+        throw new Error('Session expired. Please log in again.');
+      }
+
+      if (!res.ok) {
+        let detail = `HTTP ${res.status}`;
+        try {
+          const err = await res.json();
+          detail = err.detail ?? detail;
+        } catch {}
+        throw new Error(detail);
+      }
+
+      return res.json() as Promise<Photo>;
+    } catch (error: any) {
+      clearTimeout(timer);
+      if (error.name === 'AbortError') {
+        throw new Error('Upload timed out. Check your connection and try again.');
+      }
+      throw error;
     }
-
-    const res = await fetch(`${BASE_URL}/projects/${projectId}/photos`, {
-      method: 'POST',
-      headers: {
-        Authorization: `Bearer ${this.token}`,
-        // Note: do NOT set Content-Type manually for multipart — fetch sets it with boundary
-      },
-      body: formData,
-    });
-
-    if (!res.ok) {
-      let detail = `HTTP ${res.status}`;
-      try {
-        const err = await res.json();
-        detail = err.detail ?? detail;
-      } catch {}
-      throw new Error(detail);
-    }
-
-    return res.json() as Promise<Photo>;
   }
 
   async uploadPhotoToWindow(
@@ -263,40 +306,59 @@ class ApiClient {
     capturedAt: string,
     captureSequence?: number,
   ): Promise<Photo> {
-    const formData = new FormData();
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 60000);
 
-    formData.append('file', {
-      uri: photoUri,
-      type: 'image/jpeg',
-      name: 'photo.jpg',
-    } as unknown as Blob);
+    try {
+      const formData = new FormData();
 
-    if (notes) {
-      formData.append('notes', notes);
+      formData.append('file', {
+        uri: photoUri,
+        type: 'image/jpeg',
+        name: 'photo.jpg',
+      } as unknown as Blob);
+
+      if (notes) {
+        formData.append('notes', notes);
+      }
+      formData.append('captured_at', capturedAt);
+      if (captureSequence !== undefined) {
+        formData.append('capture_sequence', captureSequence.toString());
+      }
+
+      const res = await fetch(`${BASE_URL}/windows/${windowId}/photos`, {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${this.token}`,
+        },
+        body: formData,
+        signal: controller.signal,
+      });
+
+      clearTimeout(timer);
+
+      if (res.status === 401) {
+        this.setToken(null);
+        throw new Error('Session expired. Please log in again.');
+      }
+
+      if (!res.ok) {
+        let detail = `HTTP ${res.status}`;
+        try {
+          const err = await res.json();
+          detail = err.detail ?? detail;
+        } catch {}
+        throw new Error(detail);
+      }
+
+      return res.json() as Promise<Photo>;
+    } catch (error: any) {
+      clearTimeout(timer);
+      if (error.name === 'AbortError') {
+        throw new Error('Upload timed out. Check your connection and try again.');
+      }
+      throw error;
     }
-    formData.append('captured_at', capturedAt);
-    if (captureSequence !== undefined) {
-      formData.append('capture_sequence', captureSequence.toString());
-    }
-
-    const res = await fetch(`${BASE_URL}/windows/${windowId}/photos`, {
-      method: 'POST',
-      headers: {
-        Authorization: `Bearer ${this.token}`,
-      },
-      body: formData,
-    });
-
-    if (!res.ok) {
-      let detail = `HTTP ${res.status}`;
-      try {
-        const err = await res.json();
-        detail = err.detail ?? detail;
-      } catch {}
-      throw new Error(detail);
-    }
-
-    return res.json() as Promise<Photo>;
   }
 
   async updatePhoto(

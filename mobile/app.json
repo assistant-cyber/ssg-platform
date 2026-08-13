@@ -48,7 +48,8 @@
         }
       ],
       "expo-secure-store",
-      "@react-native-voice/voice"
+      "@react-native-voice/voice",
+      "expo-font"
     ],
     "scheme": "ssg-field",
     "experiments": {

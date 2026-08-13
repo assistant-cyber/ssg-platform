@@ -193,6 +193,15 @@ class ApiClient {
     }
 
     if (!res.ok) {
+      // 401 handler — clear token and redirect to login
+      if (res.status === 401) {
+        this.setToken(null);
+        if (typeof window !== 'undefined') {
+          window.location.href = '/login';
+        }
+        throw new Error('Session expired. Redirecting to login...');
+      }
+
       let detail = `HTTP ${res.status}`;
       try { const e = await res.json(); detail = e.detail ?? detail; } catch {}
       throw new Error(detail);

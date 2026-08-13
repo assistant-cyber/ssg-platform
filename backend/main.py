@@ -84,3 +84,28 @@ def health_check():
         "service": "Scottish Stained Glass Platform",
         "version": "1.0.0",
     }
+
+
+@app.get("/health", tags=["health"])
+def detailed_health():
+    """Detailed health check with DB connectivity test."""
+    from app.database import SessionLocal
+    from sqlalchemy import text
+    
+    db_status = "ok"
+    db_error = None
+    
+    try:
+        db = SessionLocal()
+        db.execute(text("SELECT 1"))
+        db.close()
+    except Exception as e:
+        db_status = "error"
+        db_error = str(e)
+    
+    return {
+        "status": "ok" if db_status == "ok" else "degraded",
+        "version": "1.0.0",
+        "db": db_status,
+        "db_error": db_error,
+    }
