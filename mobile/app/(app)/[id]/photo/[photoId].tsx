@@ -1,7 +1,6 @@
 /**
  * Photo Review Screen — full-screen view of a single photo.
- * Edit notes, save, or delete.
- * v2: full-screen notes modal + voice dictation + fixed autocorrect.
+ * Shows computed label prominently, edit per-photo notes.
  */
 import React, { useEffect, useRef, useState } from 'react';
 import {
@@ -22,7 +21,6 @@ import { router, Stack, useLocalSearchParams } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import api, { Photo } from '@/services/api';
 import Colors from '@/constants/Colors';
-import { ShorthandHint } from '@/components/ShorthandHint';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import Voice, {
     SpeechResultsEvent,
@@ -144,14 +142,14 @@ export default function PhotoReviewScreen() {
         return (
                 <View style={styles.center}>
                           <ActivityIndicator size="large" color={Colors.primary} />
-                </View>View>
+                </View>
               );
   }
 
   const imageUrl = api.photoUrl(photo.storage_url);
-    const windowLabel = photo.window_number
-      ? `Window ${photo.window_number}${photo.panel_letter ?? ''}`
-          : photo.filename?.replace(/\.[^.]+$/, '') ?? 'Photo';
+  const displayLabel = photo.label ?? (photo.window_number
+    ? `${photo.window_number}${photo.panel_letter ?? ''}`
+    : photo.filename?.replace(/\\.[^.]+$/, '') ?? 'Photo');
 
   return (
         <>
@@ -161,7 +159,7 @@ export default function PhotoReviewScreen() {
                       >
                       <Stack.Screen
                                   options={{
-                                                title: windowLabel,
+                                                title: displayLabel,
                                                 headerRight: () => (
                                                                 <TouchableOpacity
                                                                                   onPress={handleDelete}
@@ -173,7 +171,7 @@ export default function PhotoReviewScreen() {
                                                                                                   ) : (
                                                                                                     <Ionicons name="trash-outline" size={22} color={Colors.white} />
                                                                                                   )}
-                                                                </TouchableOpacity>TouchableOpacity>
+                                                                </TouchableOpacity>
                                                               ),
                                   }}
                                 />
@@ -185,34 +183,30 @@ export default function PhotoReviewScreen() {
                                                             style={styles.image}
                                                             resizeMode="contain"
                                                           />
-                                </View>View>
+                                </View>
                       
                                 <ScrollView
                                               style={styles.notesPanel}
                                               contentContainerStyle={styles.notesPanelContent}
                                               keyboardShouldPersistTaps="handled"
                                             >
-                                            <ShorthandHint />
-                                
                                             <View style={styles.metaRow}>
-                                              {photo.window_number && (
-                                                              <View style={styles.metaBadge}>
-                                                                                <Text style={styles.metaBadgeText}>
-                                                                                                    W{photo.window_number}{photo.panel_letter ?? ''}
-                                                                                </Text>Text>
-                                                              </View>View>
+                                              {photo.label && (
+                                                              <View style={styles.labelBadge}>
+                                                                                <Text style={styles.labelText}>{photo.label}</Text>
+                                                              </View>
                                                           )}
                                               {photo.elevation && (
                                                               <View style={styles.metaBadge}>
-                                                                                <Text style={styles.metaBadgeText}>{photo.elevation}</Text>Text>
-                                                              </View>View>
+                                                                                <Text style={styles.metaBadgeText}>{photo.elevation}</Text>
+                                                              </View>
                                                           )}
                                                           <Text style={styles.metaDate}>
                                                             {new Date(photo.uploaded_at).toLocaleDateString()}
-                                                          </Text>Text>
-                                            </View>View>
+                                                          </Text>
+                                            </View>
                                 
-                                            <Text style={styles.label}>Window notes</Text>Text>
+                                            <Text style={styles.label}>Photo notes</Text>
                                 
                                             <TouchableOpacity
                                                             style={styles.notesPreview}
@@ -223,18 +217,18 @@ export default function PhotoReviewScreen() {
                                                             {notes ? (
                                                                               <Text style={styles.notesPreviewText} numberOfLines={3}>
                                                                                 {notes}
-                                                                              </Text>Text>
+                                                                              </Text>
                                                                             ) : (
                                                                               <Text style={styles.notesPlaceholder}>
                                                                                                   Tap to add notes or use voice…
-                                                                              </Text>Text>
+                                                                              </Text>
                                                                           )}
-                                                          </View>View>
+                                                          </View>
                                                           <View style={styles.notesPreviewIcons}>
                                                                           <Ionicons name="mic-outline" size={18} color={Colors.primary} />
                                                                           <Ionicons name="expand-outline" size={18} color={Colors.textMuted} />
-                                                          </View>View>
-                                            </TouchableOpacity>TouchableOpacity>
+                                                          </View>
+                                            </TouchableOpacity>
                                 
                                             <TouchableOpacity
                                                             style={[styles.saveBtn, (!dirty || saving) && styles.saveBtnDisabled]}
@@ -246,13 +240,13 @@ export default function PhotoReviewScreen() {
                                                                           ) : (
                                                                             <>
                                                                                               <Ionicons name="checkmark-circle-outline" size={20} color={Colors.white} />
-                                                                                              <Text style={styles.saveBtnText}>Save Notes</Text>Text>
-                                                                            </>>
+                                                                                              <Text style={styles.saveBtnText}>Save Notes</Text>
+                                                                            </>
                                                                           )}
-                                            </TouchableOpacity>TouchableOpacity>
-                                </ScrollView>ScrollView>
-                      </SafeAreaView>SafeAreaView>
-              </KeyboardAvoidingView>KeyboardAvoidingView>
+                                            </TouchableOpacity>
+                                </ScrollView>
+                      </SafeAreaView>
+              </KeyboardAvoidingView>
         
               <Modal
                         visible={modalVisible}
@@ -264,10 +258,10 @@ export default function PhotoReviewScreen() {
                                 <View style={styles.modalHeader}>
                                             <TouchableOpacity onPress={() => setModalVisible(false)} style={styles.modalClose}>
                                                           <Ionicons name="chevron-down" size={26} color={Colors.textDark} />
-                                            </TouchableOpacity>TouchableOpacity>
-                                            <Text style={styles.modalTitle}>{windowLabel}</Text>Text>
+                                            </TouchableOpacity>
+                                            <Text style={styles.modalTitle}>{displayLabel}</Text>
                                             <View style={{ width: 34 }} />
-                                </View>View>
+                                </View>
                       
                                 <KeyboardAvoidingView
                                               style={{ flex: 1 }}
@@ -279,8 +273,8 @@ export default function PhotoReviewScreen() {
                                                                                 <Ionicons name="radio-button-on" size={14} color={Colors.white} />
                                                                                 <Text style={styles.listeningText} numberOfLines={2}>
                                                                                   {partialText || 'Listening…'}
-                                                                                </Text>Text>
-                                                              </View>View>
+                                                                                </Text>
+                                                              </View>
                                                           )}
                                             
                                                           <TextInput
@@ -290,7 +284,7 @@ export default function PhotoReviewScreen() {
                                                                             placeholder="Type notes or tap the mic to dictate…"
                                                                             placeholderTextColor={Colors.textLight}
                                                                             multiline
-                                                                            autoCapitalize="none"
+                                                                            autoCapitalize="sentences"
                                                                             autoCorrect={false}
                                                                             spellCheck={false}
                                                                             autoComplete="off"
@@ -311,8 +305,8 @@ export default function PhotoReviewScreen() {
                                                                                                                 />
                                                                                             <Text style={[styles.voiceBtnLabel, isListening && styles.voiceBtnLabelActive]}>
                                                                                               {isListening ? 'Stop' : 'Voice'}
-                                                                                              </Text>Text>
-                                                                          </TouchableOpacity>TouchableOpacity>
+                                                                                              </Text>
+                                                                          </TouchableOpacity>
                                                           
                                                                           <TouchableOpacity
                                                                                               style={[styles.saveBtnModal, (!dirty || saving) && styles.saveBtnDisabled]}
@@ -324,16 +318,16 @@ export default function PhotoReviewScreen() {
                                                                                                                 ) : (
                                                                                                                   <>
                                                                                                                                         <Ionicons name="checkmark-circle-outline" size={20} color={Colors.white} />
-                                                                                                                                        <Text style={styles.saveBtnText}>Save</Text>Text>
-                                                                                                                    </>>
+                                                                                                                                        <Text style={styles.saveBtnText}>Save</Text>
+                                                                                                                    </>
                                                                                                                 )}
-                                                                          </TouchableOpacity>TouchableOpacity>
-                                                          </View>View>
-                                            </View>View>
-                                </KeyboardAvoidingView>KeyboardAvoidingView>
-                      </SafeAreaView>SafeAreaView>
-              </Modal>Modal>
-        </>>
+                                                                          </TouchableOpacity>
+                                                          </View>
+                                            </View>
+                                </KeyboardAvoidingView>
+                      </SafeAreaView>
+              </Modal>
+        </>
       );
 }
 
@@ -345,6 +339,13 @@ const styles = StyleSheet.create({
     notesPanel: { flex: 1, backgroundColor: Colors.background },
     notesPanelContent: { padding: 16, paddingBottom: 32, gap: 4 },
     metaRow: { flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 12 },
+    labelBadge: {
+          backgroundColor: Colors.primary,
+          borderRadius: 8,
+          paddingHorizontal: 10,
+          paddingVertical: 5,
+    },
+    labelText: { fontSize: 15, fontWeight: '700', color: Colors.white },
     metaBadge: {
           backgroundColor: Colors.primaryLight,
           borderRadius: 6,
@@ -366,7 +367,7 @@ const styles = StyleSheet.create({
           alignItems: 'flex-start',
           gap: 8,
     },
-    notesPreviewText: { fontSize: 15, color: Colors.textDark, fontFamily: 'monospace' },
+    notesPreviewText: { fontSize: 15, color: Colors.textDark },
     notesPlaceholder: { fontSize: 15, color: Colors.textLight, fontStyle: 'italic' },
     notesPreviewIcons: { flexDirection: 'row', gap: 6, paddingTop: 2 },
     saveBtn: {
@@ -413,7 +414,6 @@ const styles = StyleSheet.create({
           color: Colors.textDark,
           backgroundColor: Colors.white,
           textAlignVertical: 'top',
-          fontFamily: 'monospace',
     },
     actionRow: { flexDirection: 'row', gap: 12, paddingBottom: 8 },
     voiceBtn: {
@@ -442,4 +442,3 @@ const styles = StyleSheet.create({
           gap: 8,
     },
 });
-</></></>

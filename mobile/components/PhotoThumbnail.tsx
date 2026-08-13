@@ -26,9 +26,9 @@ export function PhotoThumbnail({ photo, onPress }: Props) {
     ? api.photoUrl(photo.storage_url)
     : null;
 
-  const windowLabel = photo.window_number
-    ? `W${photo.window_number}${photo.panel_letter ?? ''}`
-    : photo.filename?.replace(/\.[^.]+$/, '') ?? null;
+  const displayLabel = photo.label ?? (photo.window_number
+    ? `${photo.window_number}${photo.panel_letter ?? ''}`
+    : photo.filename?.replace(/\.[^.]+$/, '') ?? null);
 
   return (
     <TouchableOpacity style={styles.container} onPress={onPress} activeOpacity={0.8}>
@@ -53,9 +53,9 @@ export function PhotoThumbnail({ photo, onPress }: Props) {
           </View>
         )}
 
-        {windowLabel && (
+        {displayLabel && (
           <View style={styles.windowBadge}>
-            <Text style={styles.windowBadgeText}>{windowLabel}</Text>
+            <Text style={styles.windowBadgeText}>{displayLabel}</Text>
           </View>
         )}
       </View>

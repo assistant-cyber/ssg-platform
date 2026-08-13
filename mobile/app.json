@@ -47,7 +47,8 @@
           "photosPermission": "SSG Field needs access to your photos."
         }
       ],
-      "expo-secure-store"
+      "expo-secure-store",
+      "@react-native-voice/voice"
     ],
     "scheme": "ssg-field",
     "experiments": {

@@ -33,11 +33,24 @@ export interface Project {
   photo_count: number;
 }
 
+export interface Window {
+  id: string;
+  project_id: string;
+  number: number;
+  name: string | null;
+  notes: string | null;
+  created_at: string;
+  sort_order: number;
+  photo_count?: number;
+}
+
 export interface Photo {
   id: string;
   project_id: string;
+  window_id: string | null;
   storage_url: string;
   thumbnail_url: string | null;
+  original_filename: string | null;
   filename: string | null;
   window_number: string | null;
   panel_letter: string | null;
@@ -45,6 +58,10 @@ export interface Photo {
   notes: string | null;
   sort_order: number;
   uploaded_at: string;
+  captured_at: string | null;
+  capture_sequence: number | null;
+  letter_override: string | null;
+  label?: string;
 }
 
 export interface Estimate {
@@ -160,6 +177,42 @@ class ApiClient {
     return this.request<Project>('PATCH', `/projects/${id}`, data);
   }
 
+  // ── Windows ───────────────────────────────────────────────────────────────
+
+  async listWindows(projectId: string): Promise<Window[]> {
+    return this.request<Window[]>('GET', `/projects/${projectId}/windows`);
+  }
+
+  async createWindow(projectId: string, data: {
+    number: number;
+    name?: string;
+    notes?: string;
+    sort_order?: number;
+  }): Promise<Window> {
+    return this.request<Window>('POST', `/projects/${projectId}/windows`, data);
+  }
+
+  async getWindow(windowId: string): Promise<Window> {
+    return this.request<Window>('GET', `/windows/${windowId}`);
+  }
+
+  async updateWindow(windowId: string, data: {
+    number?: number;
+    name?: string;
+    notes?: string;
+    sort_order?: number;
+  }): Promise<Window> {
+    return this.request<Window>('PATCH', `/windows/${windowId}`, data);
+  }
+
+  async deleteWindow(windowId: string): Promise<void> {
+    return this.request<void>('DELETE', `/windows/${windowId}`);
+  }
+
+  async listWindowPhotos(windowId: string): Promise<Photo[]> {
+    return this.request<Photo[]>('GET', `/windows/${windowId}/photos`);
+  }
+
   // ── Photos ────────────────────────────────────────────────────────────────
 
   async uploadPhoto(
@@ -187,6 +240,49 @@ class ApiClient {
       headers: {
         Authorization: `Bearer ${this.token}`,
         // Note: do NOT set Content-Type manually for multipart — fetch sets it with boundary
+      },
+      body: formData,
+    });
+
+    if (!res.ok) {
+      let detail = `HTTP ${res.status}`;
+      try {
+        const err = await res.json();
+        detail = err.detail ?? detail;
+      } catch {}
+      throw new Error(detail);
+    }
+
+    return res.json() as Promise<Photo>;
+  }
+
+  async uploadPhotoToWindow(
+    windowId: string,
+    photoUri: string,
+    notes: string,
+    capturedAt: string,
+    captureSequence?: number,
+  ): Promise<Photo> {
+    const formData = new FormData();
+
+    formData.append('file', {
+      uri: photoUri,
+      type: 'image/jpeg',
+      name: 'photo.jpg',
+    } as unknown as Blob);
+
+    if (notes) {
+      formData.append('notes', notes);
+    }
+    formData.append('captured_at', capturedAt);
+    if (captureSequence !== undefined) {
+      formData.append('capture_sequence', captureSequence.toString());
+    }
+
+    const res = await fetch(`${BASE_URL}/windows/${windowId}/photos`, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${this.token}`,
       },
       body: formData,
     });
