@@ -20,11 +20,13 @@ import { router, Stack, useLocalSearchParams, useFocusEffect } from 'expo-router
 import { Ionicons } from '@expo/vector-icons';
 import api, { Window, Photo } from '@/services/api';
 import Colors from '@/constants/Colors';
+import { useMounted } from '@/hooks/useMounted';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Image } from 'react-native';
 
 export default function WindowDetailScreen() {
   const { id: projectId, windowId } = useLocalSearchParams<{ id: string; windowId: string }>();
+  const isMounted = useMounted();
   const [window, setWindow] = useState<Window | null>(null);
   const [photos, setPhotos] = useState<Photo[]>([]);
   const [loading, setLoading] = useState(true);
@@ -41,15 +43,19 @@ export default function WindowDetailScreen() {
         api.getWindow(windowId),
         api.listWindowPhotos(windowId),
       ]);
+      if (!isMounted.current) return;
       setWindow(windowData);
       setPhotos(photosData);
       setNotes(windowData.notes ?? '');
       setNotesDirty(false);
     } catch (err: any) {
+      if (!isMounted.current) return;
       Alert.alert('Error', err.message ?? 'Could not load window.');
     } finally {
-      setLoading(false);
-      setRefreshing(false);
+      if (isMounted.current) {
+        setLoading(false);
+        setRefreshing(false);
+      }
     }
   }, [windowId]);
 

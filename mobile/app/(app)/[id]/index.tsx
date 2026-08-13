@@ -21,6 +21,7 @@ import api, { ProjectDetail, Window, Photo } from '@/services/api';
 import Colors from '@/constants/Colors';
 import { PhotoThumbnail } from '@/components/PhotoThumbnail';
 import { WindowCard } from '@/components/WindowCard';
+import { useMounted } from '@/hooks/useMounted';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 const STATUS_LABELS: Record<string, string> = {
@@ -34,6 +35,7 @@ const STATUS_LABELS: Record<string, string> = {
 
 export default function ProjectDetailScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
+  const isMounted = useMounted();
   const [project, setProject] = useState<ProjectDetail | null>(null);
   const [windows, setWindows] = useState<Window[]>([]);
   const [loading, setLoading] = useState(true);
@@ -51,13 +53,17 @@ export default function ProjectDetailScreen() {
         api.getProject(id),
         api.listWindows(id),
       ]);
+      if (!isMounted.current) return;
       setProject(projectData);
       setWindows(windowsData);
     } catch (err: any) {
+      if (!isMounted.current) return;
       Alert.alert('Error', err.message ?? 'Could not load project.');
     } finally {
-      setLoading(false);
-      setRefreshing(false);
+      if (isMounted.current) {
+        setLoading(false);
+        setRefreshing(false);
+      }
     }
   }, [id]);
 
