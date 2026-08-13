@@ -172,31 +172,85 @@ class TestLetteringReflowScenarios:
 class TestTimezoneAndOrdering:
     """Test ordering by captured_at with timezone-aware timestamps."""
     
-    def test_chronological_ordering(self):
-        """Test that labels respect chronological capture order.
+    def test_chronological_ordering_defensive_sort(self):
+        """Test that compute_labels_for_photos DEFENSIVELY SORTS by timestamp.
         
-        This is a documentation test - the actual ordering happens in the
-        database query (ORDER BY captured_at, capture_sequence, uploaded_at),
-        but the labeling logic assumes photos arrive in correct order.
+        Phase 4: The function now sorts internally to prevent wrong labels
+        from unsorted input.
         """
-        # Photos arrive already sorted by capture time
+        # Photos arrive OUT OF ORDER (simulating upload order != capture order)
         photos = [
             {"id": "3", "captured_at": "2024-01-03T10:00:00Z"},  # Third by time
             {"id": "1", "captured_at": "2024-01-01T10:00:00Z"},  # First by time
             {"id": "2", "captured_at": "2024-01-02T10:00:00Z"},  # Second by time
         ]
         
-        # BUT the caller should sort them first - this function just assigns letters
-        # to the order it receives. Here we're demonstrating what happens if
-        # they're NOT sorted (to show the importance of pre-sorting).
-        labels_wrong_order = compute_labels_for_photos(photos, window_number=1)
-        assert labels_wrong_order == ["1a", "1b", "1c"]  # Wrong chronology!
+        # The function sorts internally, so labels are chronologically correct
+        labels = compute_labels_for_photos(photos, window_number=1)
+        assert labels == ["1a", "1b", "1c"]
         
-        # Correct usage: caller sorts by captured_at first
-        photos_sorted = sorted(photos, key=lambda p: p["captured_at"])
-        labels_correct = compute_labels_for_photos(photos_sorted, window_number=1)
-        assert labels_correct == ["1a", "1b", "1c"]
-        # Now labels match chronological order: id=1 is 1a, id=2 is 1b, id=3 is 1c
-        assert photos_sorted[0]["id"] == "1"
-        assert photos_sorted[1]["id"] == "2"
-        assert photos_sorted[2]["id"] == "3"
+        # The returned labels correspond to sorted order:
+        # - id=1 (earliest timestamp) gets 1a
+        # - id=2 (middle timestamp) gets 1b
+        # - id=3 (latest timestamp) gets 1c
+    
+    def test_capture_sequence_fallback(self):
+        """Test that capture_sequence is used when captured_at is missing."""
+        photos = [
+            {"id": "1", "capture_sequence": 3},
+            {"id": "2", "capture_sequence": 1},
+            {"id": "3", "capture_sequence": 2},
+        ]
+        
+        labels = compute_labels_for_photos(photos, window_number=2)
+        # Should be sorted by capture_sequence: 1, 2, 3
+        assert labels == ["2a", "2b", "2c"]
+    
+    def test_uploaded_at_fallback(self):
+        """Test that uploaded_at is used when captured_at and capture_sequence are missing."""
+        photos = [
+            {"id": "1", "uploaded_at": "2024-01-03T10:00:00Z"},
+            {"id": "2", "uploaded_at": "2024-01-01T10:00:00Z"},
+            {"id": "3", "uploaded_at": "2024-01-02T10:00:00Z"},
+        ]
+        
+        labels = compute_labels_for_photos(photos, window_number=3)
+        # Should be sorted by uploaded_at
+        assert labels == ["3a", "3b", "3c"]
+    
+    def test_mixed_timestamps_sort_priority(self):
+        """Test sort priority: captured_at > capture_sequence > uploaded_at."""
+        photos = [
+            {"id": "1", "captured_at": "2024-01-02T10:00:00Z", "capture_sequence": 1},
+            {"id": "2", "captured_at": "2024-01-01T10:00:00Z", "capture_sequence": 2},
+            {"id": "3", "upload_at": "2024-01-01T09:00:00Z"},  # No captured_at, sorts last
+        ]
+        
+        labels = compute_labels_for_photos(photos, window_number=1)
+        # id=2 has earliest captured_at (wins over capture_sequence)
+        # id=1 has second captured_at
+        # id=3 has no captured_at, sorts last
+        assert labels == ["1a", "1b", "1c"]
+    
+    def test_more_than_26_photos_unsorted_input(self):
+        """Test >26 photos with unsorted input to verify defensive sorting works at scale."""
+        # Create 30 photos with random-ish timestamps
+        photos = [
+            {"id": f"photo_{i}", "captured_at": f"2024-01-{(i * 3) % 28 + 1:02d}T10:00:00Z"}
+            for i in range(30)
+        ]
+        
+        labels = compute_labels_for_photos(photos, window_number=5)
+        
+        # Should have 30 labels
+        assert len(labels) == 30
+        
+        # First 26 are single letters
+        assert labels[0] is not None and labels[0].startswith("5")
+        assert labels[25] is not None and labels[25].endswith("z")
+        
+        # Next 4 are double letters
+        assert labels[26] is not None and labels[26].endswith("aa")
+        assert labels[27] is not None and labels[27].endswith("ab")
+        assert labels[28] is not None and labels[28].endswith("ac")
+        assert labels[29] is not None and labels[29].endswith("ad")

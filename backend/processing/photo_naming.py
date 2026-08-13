@@ -1,8 +1,12 @@
 """
-Photo auto-naming logic ported from companycam_integration.py.
+Photo auto-naming logic based on Window structure.
 
-Generates filenames for photos based on shorthand descriptions (window numbers,
-panel letters, directional labels, site notes, spelled-out numbers).
+Phase 4: Filenames derived from Window structure (window_id + chronological lettering).
+Format: {window_number}{letter}.jpg (e.g. 1a.jpg, 1b.jpg, ..., 2a.jpg, ...)
+Site/elevation photos (no window_id) keep directional labels (North.jpg, South.jpg, site_notes.jpg).
+
+Legacy shorthand parsing functions (from CompanyCam workflow) are preserved with
+'legacy_' prefix for backward compatibility with migration scripts.
 """
 import re
 from typing import Dict, List, Optional, Tuple
@@ -92,13 +96,18 @@ def _parse_word_number(text: str) -> Optional[Tuple[str, str, int]]:
     return None
 
 
-# ─── Label extraction ─────────────────────────────────────────────────────────
+# ─── LEGACY: Label extraction (preserved for migration scripts) ──────────────
+# These functions parse shorthand notes from the old CompanyCam workflow.
+# They are ONLY used by scripts/migrate_create_windows.py to backfill Window
+# entities from existing photo notes. Production naming uses Window structure.
 
-def _strip_note_delimiter(text: str) -> str:
+def legacy_strip_note_delimiter(text: str) -> str:
+    """Legacy helper: strip delimiter characters from notes."""
     return re.sub(r'^[\s\-:.,]+', '', text or '').strip()
 
 
-def _extract_base_label_parts(notes: str) -> Tuple[Optional[str], Optional[str]]:
+def legacy_extract_base_label_parts(notes: str) -> Tuple[Optional[str], Optional[str]]:
+    """Legacy helper: extract (window_number, panel_letter) from shorthand notes."""
     notes_stripped = (notes or "").strip()
     if not notes_stripped:
         return None, None
@@ -118,6 +127,10 @@ def _extract_base_label_parts(notes: str) -> Tuple[Optional[str], Optional[str]]
 
 
 def normalize_field_note(notes: str) -> str:
+    """Legacy: normalize field notes by stripping 'window' or 'photo' prefix.
+    
+    DEPRECATED: Only used for backward compatibility with migration scripts.
+    """
     notes_stripped = (notes or "").strip()
     prefix = re.match(r'^(window|photo)\b', notes_stripped, re.IGNORECASE)
     if not prefix:
@@ -127,7 +140,7 @@ def normalize_field_note(notes: str) -> str:
     if not remainder:
         return notes_stripped
 
-    window_number, panel_letter = _extract_base_label_parts(remainder)
+    window_number, panel_letter = legacy_extract_base_label_parts(remainder)
     if not window_number:
         return notes_stripped
 
@@ -141,12 +154,14 @@ def normalize_field_note(notes: str) -> str:
         if word_result:
             suffix = remainder[word_result[2]:]
 
-    return f"{label} {_strip_note_delimiter(suffix)}".strip()
+    return f"{label} {legacy_strip_note_delimiter(suffix)}".strip()
 
 
 def extract_label_from_description(notes: str) -> Optional[str]:
-    """Extract the base label from a photo description string.
+    """Legacy: Extract the base label from a photo description string.
 
+    DEPRECATED: Only used by migration scripts. Production code uses Window structure.
+    
     Returns the label (e.g. ``"45"``, ``"45A"``, ``"North"``, ``"site_notes"``)
     or ``None`` if no recognisable label is found.
     """
@@ -165,7 +180,7 @@ def extract_label_from_description(notes: str) -> Optional[str]:
     if notes_lower.startswith("site notes"):
         return "site_notes"
 
-    window_number, panel_letter = _extract_base_label_parts(notes_stripped)
+    window_number, panel_letter = legacy_extract_base_label_parts(notes_stripped)
     if window_number:
         return window_number + (panel_letter or '')
 
@@ -173,8 +188,11 @@ def extract_label_from_description(notes: str) -> Optional[str]:
 
 
 def extract_label_parts(notes: str) -> Tuple[Optional[str], Optional[str]]:
-    """Return ``(window_number, panel_letter)`` parsed from notes shorthand.
+    """Legacy: Return ``(window_number, panel_letter)`` parsed from notes shorthand.
 
+    DEPRECATED: Only used by scripts/migrate_create_windows.py. Production code
+    uses Window structure with photo.window_id foreign key.
+    
     ``panel_letter`` is ``None`` (not ``""``) when the photo has no panel letter
     (e.g. it's a whole-window shot like ``"1 48x96"``).
     """
@@ -182,53 +200,119 @@ def extract_label_parts(notes: str) -> Tuple[Optional[str], Optional[str]]:
     if not notes_stripped:
         return None, None
 
-    return _extract_base_label_parts(notes_stripped)
+    return legacy_extract_base_label_parts(notes_stripped)
 
 
-# ─── Filename generation ──────────────────────────────────────────────────────
+# ─── Filename generation (Window-based) ───────────────────────────────────────
 
 def generate_filenames_for_photos(
-    photos_list: List[dict],
+    windows: List[dict],
     ext: str = ".jpg",
-) -> List[str]:
-    """Generate auto-sequenced filenames for a list of photo dicts.
-
-    Each dict must have at least a ``"notes"`` key.  Optionally a ``"filename"``
-    key to use a specific extension.
-
-    Auto-sequencing rules (matching companycam_integration.py exactly):
-
-    - A photo with a description becomes a "labeled" photo (e.g. ``"1A.jpg"``).
-      It sets the current label and resets the inherit counter.
-    - A photo with no description inherits the current label with a sequence
-      counter: ``"1A(1).jpg"``, ``"1A(2).jpg"``, etc.
-    - If no label has been set yet, unlabeled photos fall back to
-      ``"photo_001.jpg"``.
+) -> List[Tuple[str, str]]:
+    """Generate filenames from Window structure.
+    
+    Args:
+        windows: List of window dicts, each with:
+            - 'number': int window number
+            - 'photos': list of photo dicts, each with:
+                - 'id': photo ID
+                - 'label': computed label (e.g. '1a', '1b')
+                - 'letter_override': optional manual letter
+                - optional 'filename' key to use specific extension
+        ext: default file extension (default: .jpg)
+        
+    Returns:
+        List of (photo_id, filename) tuples in window/chronological order.
+        
+    Examples:
+        Window 1 with 3 photos labeled 1a, 1b, 1c:
+        [('photo_id_1', '1a.jpg'), ('photo_id_2', '1b.jpg'), ('photo_id_3', '1c.jpg')]
+        
+        Site photos (no window) with directional labels:
+        [('photo_id_x', 'North.jpg'), ('photo_id_y', 'South.jpg')]
     """
-    filenames: List[str] = []
-    current_label: Optional[str] = None
-    inherit_counter: int = 0
+    from app.photo_lettering import compute_letter
+    
+    filenames: List[Tuple[str, str]] = []
+    
+    # Sort windows by number
+    sorted_windows = sorted(windows, key=lambda w: w.get('number', 999))
+    
+    for window in sorted_windows:
+        window_number = window.get('number')
+        photos = window.get('photos', [])
+        
+        for idx, photo in enumerate(photos):
+            photo_id = photo.get('id')
+            if not photo_id:
+                continue
+                
+            # Use provided extension or default
+            photo_ext = ext
+            if photo.get('filename'):
+                stem_ext = photo['filename'].rsplit('.', 1)
+                if len(stem_ext) == 2 and stem_ext[1]:
+                    photo_ext = '.' + stem_ext[1].lower()
+            
+            # Use the pre-computed label from photo_lettering
+            label = photo.get('label')
+            if label:
+                filename = f"{label}{photo_ext}"
+            else:
+                # Fallback: photo has no label (should not happen in production)
+                filename = f"photo_{photo_id[:8]}{photo_ext}"
+            
+            filenames.append((photo_id, filename))
+    
+    return filenames
 
-    for idx, photo in enumerate(photos_list, 1):
-        notes = photo.get("notes", "") or ""
+
+def generate_filenames_for_unassigned_photos(
+    photos: List[dict],
+    ext: str = ".jpg",
+) -> List[Tuple[str, str]]:
+    """Generate filenames for site/elevation photos not assigned to a window.
+    
+    These photos use directional labels (North, South, East, West, site_notes)
+    parsed from their notes field, falling back to photo ID.
+    
+    Args:
+        photos: List of photo dicts with 'id', 'notes', and optional 'filename'
+        ext: default file extension
+        
+    Returns:
+        List of (photo_id, filename) tuples
+    """
+    filenames: List[Tuple[str, str]] = []
+    
+    for photo in photos:
+        photo_id = photo.get('id')
+        if not photo_id:
+            continue
+            
+        notes = photo.get('notes', '') or ''
+        notes_lower = notes.lower().strip()
+        
         # Use provided extension or default
         photo_ext = ext
-        if photo.get("filename"):
-            stem_ext = photo["filename"].rsplit(".", 1)
+        if photo.get('filename'):
+            stem_ext = photo['filename'].rsplit('.', 1)
             if len(stem_ext) == 2 and stem_ext[1]:
-                photo_ext = "." + stem_ext[1].lower()
-
-        label = extract_label_from_description(notes)
-
-        if label is not None:
-            current_label = label
-            inherit_counter = 0
-            filenames.append(f"{label}{photo_ext}")
-        else:
-            if current_label is not None:
-                inherit_counter += 1
-                filenames.append(f"{current_label}({inherit_counter}){photo_ext}")
-            else:
-                filenames.append(f"photo_{idx:03d}{photo_ext}")
-
+                photo_ext = '.' + stem_ext[1].lower()
+        
+        # Directional labels
+        direction_match = re.match(r'^(north|south|east|west)\b', notes_lower)
+        if direction_match:
+            direction = direction_match.group(1).capitalize()
+            filenames.append((photo_id, f"{direction}{photo_ext}"))
+            continue
+        
+        # Site notes label
+        if notes_lower.startswith('site notes'):
+            filenames.append((photo_id, f"site_notes{photo_ext}"))
+            continue
+        
+        # Fallback: use photo ID prefix
+        filenames.append((photo_id, f"photo_{photo_id[:8]}{photo_ext}"))
+    
     return filenames

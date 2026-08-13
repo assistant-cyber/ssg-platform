@@ -64,20 +64,42 @@ def compute_labels_for_photos(
 ) -> List[Optional[str]]:
     """Compute labels for a list of photos in a window.
     
-    Photos should already be sorted by (captured_at, capture_sequence, uploaded_at).
+    DEFENSIVE SORTING: Photos are sorted chronologically before labeling to ensure
+    correct label assignment even if callers pass unsorted data. Sort keys:
+    (captured_at, capture_sequence, uploaded_at).
     
     Args:
-        photos: List of photo dicts with optional 'letter_override' key
+        photos: List of photo dicts with optional 'letter_override' key and
+                optional 'captured_at', 'capture_sequence', 'uploaded_at' timestamps
         window_number: The window's display number
         
     Returns:
         List of computed labels (e.g. ["1a", "1b", "1c"]) in the same order
-        as input photos. Returns None for photos with letter_override set
-        to empty string (hidden from labeling).
+        as the SORTED photos (not input order). Returns None for photos with
+        letter_override set to empty string (hidden from labeling).
+        
+    WARNING: The returned labels correspond to the CHRONOLOGICALLY SORTED order,
+    not the input order. If you need to map labels back to the original input,
+    use photo IDs to match them.
     """
+    # Defensive sort: ensure chronological order even if caller didn't sort
+    # Sort by captured_at (if present), then capture_sequence, then uploaded_at
+    def sort_key(photo: dict):
+        captured_at = photo.get('captured_at')
+        capture_seq = photo.get('capture_sequence', 0) or 0
+        uploaded_at = photo.get('uploaded_at')
+        
+        # Handle None/missing timestamps by sorting them last
+        captured_ts = captured_at if captured_at else '9999-12-31T23:59:59Z'
+        uploaded_ts = uploaded_at if uploaded_at else '9999-12-31T23:59:59Z'
+        
+        return (captured_ts, capture_seq, uploaded_ts)
+    
+    sorted_photos = sorted(photos, key=sort_key)
+    
     labels = []
     
-    for idx, photo in enumerate(photos):
+    for idx, photo in enumerate(sorted_photos):
         override = photo.get('letter_override')
         
         # If override is set, use it (empty string means no label)
