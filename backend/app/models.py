@@ -81,11 +81,43 @@ class Project(Base):
     assigned_staff = relationship(
         "User", foreign_keys=[assigned_staff_id], back_populates="assigned_projects"
     )
+    windows = relationship("Window", back_populates="project", order_by="Window.sort_order")
     photos = relationship("Photo", back_populates="project", order_by="Photo.sort_order")
     condition_data = relationship("ConditionData", back_populates="project")
     estimates = relationship("Estimate", back_populates="project", order_by="Estimate.created_at.desc()")
     reports = relationship("Report", back_populates="project", order_by="Report.generated_at.desc()")
     proposals = relationship("Proposal", back_populates="project", order_by="Proposal.generated_at.desc()")
+
+
+# ─── Window ───────────────────────────────────────────────────────────────────
+
+class Window(Base):
+    """A structural container (folder) for photos of a single window.
+    
+    Photos belong to a window and are auto-lettered in chronological capture
+    order (a, b, c ... z, aa, ab ...). Window 1 photo f is always "1f".
+    """
+    __tablename__ = "windows"
+
+    id = Column(String, primary_key=True, default=new_uuid)
+    project_id = Column(String, ForeignKey("projects.id"), nullable=False)
+    number = Column(Integer, nullable=False)  # display number (1, 2, 3, ...)
+    name = Column(String, nullable=True)      # optional descriptive name
+    notes = Column(Text, nullable=True)       # long-form notes (voice-dictation friendly)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    sort_order = Column(Integer, default=0, nullable=False)
+
+    # Relationships
+    project = relationship("Project", back_populates="windows")
+    photos = relationship(
+        "Photo", back_populates="window", 
+        order_by="Photo.captured_at, Photo.capture_sequence, Photo.uploaded_at",
+        cascade="all, delete-orphan"
+    )
+
+    __table_args__ = (
+        UniqueConstraint("project_id", "number", name="uq_window_project_number"),
+    )
 
 
 # ─── Photo ────────────────────────────────────────────────────────────────────
@@ -95,6 +127,7 @@ class Photo(Base):
 
     id = Column(String, primary_key=True, default=new_uuid)
     project_id = Column(String, ForeignKey("projects.id"), nullable=False)
+    window_id = Column(String, ForeignKey("windows.id"), nullable=True)  # nullable for site/elevation photos
     storage_url = Column(String, nullable=False)
     thumbnail_url = Column(String, nullable=True)
     original_filename = Column(String, nullable=True)
@@ -102,8 +135,11 @@ class Photo(Base):
     window_number = Column(String, nullable=True)
     panel_letter = Column(String, nullable=True)
     elevation = Column(String, nullable=True)
-    notes = Column(Text, nullable=True)              # raw shorthand description
+    notes = Column(Text, nullable=True)              # per-photo notes
     taken_at = Column(DateTime, nullable=True)
+    captured_at = Column(DateTime, nullable=True)    # client-supplied capture timestamp
+    capture_sequence = Column(Integer, nullable=True)  # fallback ordering within window
+    letter_override = Column(String, nullable=True)  # manual letter pinning (overrides auto-letter)
     uploaded_at = Column(DateTime, default=datetime.utcnow, nullable=False)
     uploaded_by_id = Column(String, ForeignKey("users.id"), nullable=True)
     sort_order = Column(Integer, default=0, nullable=False)
@@ -121,6 +157,7 @@ class Photo(Base):
 
     # Relationships
     project = relationship("Project", back_populates="photos")
+    window = relationship("Window", back_populates="photos")
     uploaded_by = relationship(
         "User", foreign_keys=[uploaded_by_id], back_populates="uploaded_photos"
     )

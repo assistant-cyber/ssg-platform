@@ -111,6 +111,35 @@ class ProjectDetail(BaseModel):
     latest_estimate: Optional["EstimateOut"] = None
 
 
+# ─── Window ───────────────────────────────────────────────────────────────────
+
+class WindowCreate(BaseModel):
+    number: int
+    name: Optional[str] = None
+    notes: Optional[str] = None
+    sort_order: int = 0
+
+
+class WindowUpdate(BaseModel):
+    number: Optional[int] = None
+    name: Optional[str] = None
+    notes: Optional[str] = None
+    sort_order: Optional[int] = None
+
+
+class WindowOut(BaseModel):
+    model_config = {"from_attributes": True}
+
+    id: str
+    project_id: str
+    number: int
+    name: Optional[str] = None
+    notes: Optional[str] = None
+    created_at: datetime
+    sort_order: int
+    photo_count: Optional[int] = None
+
+
 # ─── Photo ────────────────────────────────────────────────────────────────────
 
 class PhotoOut(BaseModel):
@@ -118,6 +147,7 @@ class PhotoOut(BaseModel):
 
     id: str
     project_id: str
+    window_id: Optional[str] = None
     storage_url: str
     thumbnail_url: Optional[str] = None
     original_filename: Optional[str] = None
@@ -127,6 +157,9 @@ class PhotoOut(BaseModel):
     elevation: Optional[str] = None
     notes: Optional[str] = None
     taken_at: Optional[datetime] = None
+    captured_at: Optional[datetime] = None
+    capture_sequence: Optional[int] = None
+    letter_override: Optional[str] = None
     uploaded_at: datetime
     uploaded_by_id: Optional[str] = None
     sort_order: int
@@ -134,12 +167,17 @@ class PhotoOut(BaseModel):
     dim_width: Optional[float] = None
     dim_height: Optional[float] = None
     dim_depth: Optional[float] = None
+    label: Optional[str] = None  # computed label (e.g. "1f")
     condition_data: Optional["ConditionDataOut"] = None
     pins: List["PhotoPinOut"] = []
 
 
 class PhotoUpdate(BaseModel):
     notes: Optional[str] = None
+    window_id: Optional[str] = None
+    captured_at: Optional[datetime] = None
+    capture_sequence: Optional[int] = None
+    letter_override: Optional[str] = None
     sort_order: Optional[int] = None
     taken_at: Optional[datetime] = None
     is_elevation: Optional[bool] = None

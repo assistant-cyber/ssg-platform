@@ -97,6 +97,19 @@ def _ensure_additive_columns() -> None:
                 if column_name not in photo_columns:
                     conn.execute(text(f"ALTER TABLE photos ADD COLUMN {column_name} {column_type}"))
 
+        # PHASE 1: Window model columns
+        # window_id, captured_at, capture_sequence, letter_override
+        phase1_columns = {
+            "window_id": "VARCHAR",  # FK to windows.id
+            "captured_at": "TIMESTAMP",
+            "capture_sequence": "INTEGER",
+            "letter_override": "VARCHAR",
+        }
+        with engine.begin() as conn:
+            for column_name, column_type in phase1_columns.items():
+                if column_name not in photo_columns:
+                    conn.execute(text(f"ALTER TABLE photos ADD COLUMN {column_name} {column_type}"))
+
 
 def create_tables() -> None:
     """Import all models so their metadata is registered, then create tables."""
