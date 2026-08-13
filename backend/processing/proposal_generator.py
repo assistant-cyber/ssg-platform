@@ -254,6 +254,9 @@ def _build_styles():
     styles.add(ParagraphStyle("SectionTitle",
         fontName="Times-Bold", fontSize=20, textColor=SSG_DARK,
         spaceBefore=6, spaceAfter=6, leading=24))
+    styles.add(ParagraphStyle("SubsectionTitle",
+        fontName="Times-Bold", fontSize=14, textColor=SSG_DARK,
+        spaceBefore=8, spaceAfter=4, leading=18))
     styles.add(ParagraphStyle("SectionSubtitle",
         fontName="Times-Italic", fontSize=11, textColor=WARM_GRAY,
         spaceBefore=0, spaceAfter=10, leading=14))
@@ -269,6 +272,9 @@ def _build_styles():
     styles.add(ParagraphStyle("Caption",
         fontName="Times-Italic", fontSize=9, textColor=SSG_GREEN,
         spaceBefore=2, spaceAfter=8, alignment=TA_LEFT))
+    styles.add(ParagraphStyle("PhotoCaption",
+        fontName="Times-Italic", fontSize=9.5, textColor=CHARCOAL,
+        spaceBefore=3, spaceAfter=6, alignment=TA_LEFT, leading=13))
     styles.add(ParagraphStyle("PreparedFor",
         fontName="Times-Bold", fontSize=24, textColor=SSG_DARK,
         spaceBefore=0, spaceAfter=6, leading=30))
@@ -421,6 +427,116 @@ def _build_assessment(story, narrative, styles, content_width):
 
     if not any(v for _, v in sections if v and v.strip()):
         story.append(Paragraph(placeholder, styles["Body"]))
+
+
+# ── Window-based detailed assessment ──────────────────────────────────────────
+
+def _build_windows_section(story, windows_data, tmpdir, styles, content_width):
+    """Phase 5: Build per-window subsections with photos in letter order.
+    
+    windows_data: list of dicts with structure:
+        {
+            "window_number": int,
+            "window_name": str or None,
+            "notes": str,
+            "photos": [
+                {
+                    "label": "1a", "1b", etc.,
+                    "storage_url": str,
+                    "local_path": str or None,
+                    "notes": str,
+                    "condition_data": dict or None,
+                    "include": bool (default True)
+                }
+            ]
+        }
+    """
+    if not windows_data:
+        return
+
+    story.append(PageBreak())
+    story.append(Paragraph("Window-by-Window Assessment", styles["SectionTitle"]))
+    story.append(GreenRule(content_width))
+    story.append(Spacer(1, 0.15 * inch))
+    story.append(Paragraph(
+        "The following sections detail each window, including field notes, "
+        "photographs in capture order, and condition observations.",
+        styles["Body"]
+    ))
+    story.append(Spacer(1, 0.2 * inch))
+
+    for win in windows_data:
+        win_num = win.get("window_number", "?")
+        win_name = win.get("window_name", "")
+        win_notes = win.get("notes", "")
+        photos_list = win.get("photos", [])
+
+        # Window header
+        header_text = f"Window {win_num}"
+        if win_name and win_name.strip():
+            header_text += f" — {win_name}"
+        story.append(Paragraph(header_text, styles["SubsectionTitle"]))
+        story.append(Spacer(1, 0.08 * inch))
+
+        # Window-level notes
+        if win_notes and win_notes.strip():
+            for para in win_notes.strip().split("\n\n"):
+                if para.strip():
+                    story.append(Paragraph(para.strip(), styles["Body"]))
+            story.append(Spacer(1, 0.1 * inch))
+
+        # Photos in letter order
+        if photos_list:
+            for photo in photos_list:
+                if not photo.get("include", True):
+                    continue  # Skip excluded photos
+
+                label = photo.get("label", "")
+                photo_notes = photo.get("notes", "")
+                cond_data = photo.get("condition_data") or {}
+                local_path = photo.get("local_path") or ""
+                storage_url = photo.get("storage_url", "")
+
+                # Resolve photo path
+                photo_path = local_path if local_path and os.path.exists(local_path) else None
+                if not photo_path and storage_url:
+                    photo_path = _resolve_photo(storage_url, tmpdir, 0)
+
+                # Photo label
+                story.append(Paragraph(f"<b>Photo {label}</b>", styles["BoldLabel"]))
+
+                # Embed photo if available
+                if photo_path:
+                    try:
+                        img = Image(photo_path, width=content_width * 0.5, height=content_width * 0.33)
+                        story.append(img)
+                        story.append(Spacer(1, 0.05 * inch))
+                    except Exception:
+                        pass  # Skip image if it fails
+
+                # Photo notes
+                if photo_notes and photo_notes.strip():
+                    story.append(Paragraph(photo_notes.strip(), styles["PhotoCaption"]))
+
+                # Condition data (if present)
+                if cond_data:
+                    cond_parts = []
+                    if cond_data.get("warp"):
+                        cond_parts.append(f"Warp: {cond_data['warp']}")
+                    if cond_data.get("lead"):
+                        cond_parts.append(f"Lead: {cond_data['lead']}")
+                    if cond_data.get("breaks"):
+                        cond_parts.append(f"Breaks: {cond_data['breaks']}")
+                    if cond_parts:
+                        cond_str = " | ".join(cond_parts)
+                        story.append(Paragraph(
+                            f"<font color='#6B6B6B' size='9'>{cond_str}</font>",
+                            styles["Body"]
+                        ))
+
+                story.append(Spacer(1, 0.12 * inch))
+
+        story.append(Spacer(1, 0.15 * inch))
 
 
 # ── Photo gallery ─────────────────────────────────────────────────────────────
@@ -693,6 +809,7 @@ def generate_proposal_pdf(
     output_path: str,
     photos: Optional[List[Dict]] = None,
     narrative: Optional[Dict] = None,
+    windows: Optional[List[Dict]] = None,
 ) -> str:
     """
     Generate a beautiful branded proposal PDF.
@@ -701,13 +818,15 @@ def generate_proposal_pdf(
         project:     dict — name, church_name, address_street/city/state
         estimate:    dict — total_amount, notes, line_items
         output_path: where to write the PDF
-        photos:      list of photo dicts with local_path/storage_url
+        photos:      list of photo dicts with local_path/storage_url (legacy)
         narrative:   dict with overview/current_condition/causes/hundred_year_plan/summary
+        windows:     Phase 5 - list of window dicts with photos in letter order
     Returns:
         output_path
     """
     photos    = photos or []
     narrative = normalize_text_narrative(narrative or {})
+    windows   = windows or []
 
     date_str = datetime.now().strftime("%B %d, %Y")
     church   = project.get("church_name") or project.get("name", "")
@@ -758,8 +877,12 @@ def generate_proposal_pdf(
         # 3. Assessment summary
         _build_assessment(story, narrative, styles, content_width)
 
-        # 4. Photo gallery
-        _build_gallery(story, gallery_photos, styles, content_width)
+        # 4. Phase 5: Window-by-window sections (replaces generic photo gallery when present)
+        if windows:
+            _build_windows_section(story, windows, tmpdir, styles, content_width)
+        elif gallery_photos:
+            # Fallback: old-style generic photo gallery
+            _build_gallery(story, gallery_photos, styles, content_width)
 
         # 5. Scope of work
         _build_scope(story, estimate, styles, content_width)

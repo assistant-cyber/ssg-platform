@@ -12,12 +12,13 @@ from sqlalchemy.orm import Session
 from app.config import settings
 from app.database import get_db, SessionLocal
 from app.dependencies import get_current_user, is_staff_role, require_staff
-from app.models import Estimate, Photo, Project, Proposal, Report, User, new_uuid
+from app.models import Estimate, Photo, Project, Proposal, Report, User, Window, new_uuid
 from app.schemas import (
     GenerateReportRequest,
     GenerateAiReportDraftRequest,
     ImproveBriefRequest,
     ImproveBriefResponse,
+    ProposalDraftUpdate,
     ProposalOut,
     ReportDraftUpdate,
     ReportOut,
@@ -722,7 +723,7 @@ def _generate_report_task(
 # ─── Background task: generate proposal ──────────────────────────────────────
 
 def _generate_proposal_task(proposal_id: str, project_id: str, estimate_id: Optional[str]):
-    """Background task: build proposal PDF, upload, update DB."""
+    """Background task: build proposal PDF from draft (if present), upload, update DB."""
     db = SessionLocal()
     try:
         project = db.query(Project).filter(Project.id == project_id).first()
@@ -786,11 +787,48 @@ def _generate_proposal_task(proposal_id: str, project_id: str, estimate_id: Opti
                 ],
             }
 
-        # Gather photos for cover/gallery
-        photos_objs = db.query(Photo).filter(Photo.project_id == project_id).order_by(Photo.sort_order).all()
         render_cache_dir = output_dir / "_media_cache"
         render_cache_dir.mkdir(parents=True, exist_ok=True)
-        photos_for_pdf = [
+
+        # Phase 5: Use saved draft if present, otherwise generate from current Window structure
+        draft = proposal.proposal_draft
+        if not draft:
+            draft = _build_proposal_draft_from_windows(project_id, db)
+
+        # Build windows_data for PDF generator from the draft
+        windows_for_pdf = []
+        for win in draft.get("windows", []):
+            window_photos = []
+            for photo_data in win.get("photos", []):
+                if not photo_data.get("include", True):
+                    continue  # Skip excluded photos
+
+                # Resolve photo path
+                storage_url = photo_data.get("storage_url", "")
+                local_path = None
+                if storage_url:
+                    local_path = storage.materialize_file(
+                        storage_url, render_cache_dir, filename=None
+                    )
+
+                window_photos.append({
+                    "label": photo_data.get("label", ""),
+                    "storage_url": storage_url,
+                    "local_path": local_path,
+                    "notes": photo_data.get("notes", ""),
+                    "condition_data": photo_data.get("condition_data", {}),
+                })
+
+            windows_for_pdf.append({
+                "window_number": win.get("window_number"),
+                "window_name": win.get("window_name", ""),
+                "notes": win.get("notes", ""),
+                "photos": window_photos
+            })
+
+        # Legacy photos for cover/gallery fallback
+        photos_objs = db.query(Photo).filter(Photo.project_id == project_id).order_by(Photo.sort_order).all()
+        photos_for_pdf_legacy = [
             {
                 "local_path": _photo_local_path(p, render_cache_dir) if p.storage_url else None,
                 "storage_url": p.storage_url,
@@ -803,17 +841,17 @@ def _generate_proposal_task(proposal_id: str, project_id: str, estimate_id: Opti
             for p in photos_objs
         ]
 
-        # Get latest report narrative if available
-        latest_report = db.query(Report).filter(Report.project_id == project_id).order_by(Report.generated_at.desc()).first()
-        narrative_for_pdf = (latest_report.narrative or {}) if latest_report else {}
+        # Narrative from draft
+        narrative_for_pdf = draft.get("narrative", {})
 
         from processing.proposal_generator import generate_proposal_pdf
         generate_proposal_pdf(
             project=project_dict,
             estimate=estimate_dict,
             output_path=pdf_path,
-            photos=photos_for_pdf,
+            photos=photos_for_pdf_legacy,  # For cover image
             narrative=narrative_for_pdf,
+            windows=windows_for_pdf,  # Phase 5: structured window sections
         )
 
         pdf_url = None
@@ -953,6 +991,171 @@ def get_report(
             raise HTTPException(status_code=404, detail="No report published for this project")
 
     return ReportOut.model_validate(report)
+
+
+# ── Phase 5: Proposal draft helpers ───────────────────────────────────────────
+
+def _build_proposal_draft_from_windows(project_id: str, db: Session) -> dict:
+    """Generate a proposal draft from Window structure.
+    
+    Returns a dict with structure:
+        {
+            "windows": [
+                {
+                    "window_number": int,
+                    "window_name": str,
+                    "notes": str,
+                    "photos": [
+                        {
+                            "label": "1a",
+                            "storage_url": str,
+                            "notes": str,
+                            "condition_data": dict,
+                            "include": bool
+                        }
+                    ]
+                }
+            ],
+            "narrative": {...}
+        }
+    """
+    from app.photo_lettering import compute_label_for_photo
+    
+    # Get all windows for this project, ordered by sort_order and number
+    windows = db.query(Window).filter(
+        Window.project_id == project_id
+    ).order_by(
+        Window.sort_order, Window.number
+    ).all()
+    
+    draft_windows = []
+    
+    for window in windows:
+        # Get photos for this window in chronological order (same as routers/windows.py)
+        photos = db.query(Photo).filter(
+            Photo.window_id == window.id
+        ).order_by(
+            Photo.captured_at,
+            Photo.capture_sequence,
+            Photo.uploaded_at
+        ).all()
+        
+        draft_photos = []
+        for idx, photo in enumerate(photos):
+            label = compute_label_for_photo(
+                {"letter_override": photo.letter_override},
+                window.number,
+                idx
+            )
+            
+            draft_photos.append({
+                "photo_id": photo.id,
+                "label": label or "",
+                "storage_url": photo.storage_url or "",
+                "notes": photo.notes or "",
+                "condition_data": photo.condition_data or {},
+                "include": True  # Default: include all photos
+            })
+        
+        draft_windows.append({
+            "window_id": window.id,
+            "window_number": window.number,
+            "window_name": window.name or "",
+            "notes": window.notes or "",
+            "photos": draft_photos
+        })
+    
+    # Get narrative from latest report if available
+    latest_report = db.query(Report).filter(
+        Report.project_id == project_id
+    ).order_by(Report.generated_at.desc()).first()
+    
+    narrative = (latest_report.narrative or {}) if latest_report else {}
+    
+    return {
+        "windows": draft_windows,
+        "narrative": narrative
+    }
+
+
+@router.get("/projects/{project_id}/proposal-draft", response_model=dict)
+def get_proposal_draft(
+    project_id: str,
+    current_user: User = Depends(require_staff),
+    db: Session = Depends(get_db),
+):
+    """Get or generate the proposal draft for editing.
+    
+    First call generates the draft from Window structure.
+    Subsequent calls return the saved draft.
+    """
+    _get_project_or_404(project_id, db)
+    
+    # Get latest proposal (or create a placeholder draft entity)
+    proposal = (
+        db.query(Proposal)
+        .filter(Proposal.project_id == project_id)
+        .order_by(Proposal.generated_at.desc())
+        .first()
+    )
+    
+    # If no proposal exists or no draft saved, generate from windows
+    if not proposal or not proposal.proposal_draft:
+        draft = _build_proposal_draft_from_windows(project_id, db)
+        
+        if not proposal:
+            # Create a new proposal entity to hold the draft
+            proposal = Proposal(
+                id=new_uuid(),
+                project_id=project_id,
+                status="draft",
+                generated_at=datetime.utcnow(),
+                proposal_draft=draft
+            )
+            db.add(proposal)
+        else:
+            proposal.proposal_draft = draft
+        
+        db.commit()
+        db.refresh(proposal)
+    
+    return proposal.proposal_draft
+
+
+@router.patch("/projects/{project_id}/proposal-draft", response_model=dict)
+def update_proposal_draft(
+    project_id: str,
+    draft_update: ProposalDraftUpdate,
+    current_user: User = Depends(require_staff),
+    db: Session = Depends(get_db),
+):
+    """Save staff edits to the proposal draft."""
+    _get_project_or_404(project_id, db)
+    
+    proposal = (
+        db.query(Proposal)
+        .filter(Proposal.project_id == project_id)
+        .order_by(Proposal.generated_at.desc())
+        .first()
+    )
+    
+    if not proposal:
+        raise HTTPException(status_code=404, detail="No proposal draft found. Call GET first.")
+    
+    # Merge updates into existing draft
+    current_draft = proposal.proposal_draft or {}
+    
+    if draft_update.windows is not None:
+        current_draft["windows"] = draft_update.windows
+    
+    if draft_update.narrative is not None:
+        current_draft["narrative"] = draft_update.narrative
+    
+    proposal.proposal_draft = current_draft
+    db.commit()
+    db.refresh(proposal)
+    
+    return proposal.proposal_draft
 
 
 @router.post(

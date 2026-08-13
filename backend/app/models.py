@@ -305,6 +305,9 @@ class Proposal(Base):
     viewed_by_customer = Column(Boolean, default=False, nullable=False)
     # Status: "pending" | "generated" | "viewed"
     status = Column(String, nullable=False, default="pending")
+    # Phase 5: Editable draft JSON before rendering final PDF
+    # Structure: {"windows": [{window_number, window_name, notes, photos: [{label, notes, condition_data, include}]}], "narrative": {...}}
+    proposal_draft = Column(JSON, nullable=True)
 
     # Relationships
     project = relationship("Project", back_populates="proposals")

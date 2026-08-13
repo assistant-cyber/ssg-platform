@@ -352,6 +352,12 @@ class ImproveBriefResponse(BaseModel):
 
 # ─── Proposal ─────────────────────────────────────────────────────────────────
 
+class ProposalDraftUpdate(BaseModel):
+    """Payload for updating the proposal draft before rendering."""
+    windows: Optional[List[dict]] = None  # List of window sections with editable notes/photos
+    narrative: Optional[dict] = None  # Text narrative sections
+
+
 class ProposalOut(BaseModel):
     model_config = {"from_attributes": True}
 
@@ -363,6 +369,7 @@ class ProposalOut(BaseModel):
     viewed_at: Optional[datetime] = None
     viewed_by_customer: bool
     status: str
+    proposal_draft: Optional[dict] = None
 
 
 # ─── Forward references ───────────────────────────────────────────────────────
