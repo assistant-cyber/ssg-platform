@@ -123,6 +123,29 @@ export interface Estimate {
   responded_at: string | null;
 }
 
+// Phase 5: Proposal draft structures
+export interface ProposalPhotoData {
+  photo_id: string;
+  label: string;
+  storage_url: string;
+  notes: string;
+  condition_data?: Record<string, unknown>;
+  include: boolean;
+}
+
+export interface ProposalWindowSection {
+  window_id: string;
+  window_number: number;
+  window_name: string;
+  notes: string;
+  photos: ProposalPhotoData[];
+}
+
+export interface ProposalDraft {
+  windows: ProposalWindowSection[];
+  narrative: Record<string, unknown>;
+}
+
 export interface Proposal {
   id: string;
   project_id: string;
@@ -400,6 +423,14 @@ class ApiClient {
   }
 
   // ── Proposals ─────────────────────────────────────────────────────────────
+  async getProposalDraft(projectId: string): Promise<ProposalDraft> {
+    return this.request('GET', `/projects/${projectId}/proposal-draft`);
+  }
+
+  async updateProposalDraft(projectId: string, draft: Partial<ProposalDraft>): Promise<ProposalDraft> {
+    return this.request('PATCH', `/projects/${projectId}/proposal-draft`, draft);
+  }
+
   async generateProposal(projectId: string): Promise<Proposal> {
     return this.request('POST', `/projects/${projectId}/generate-proposal`);
   }

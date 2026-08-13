@@ -21,6 +21,7 @@ import { fromApiItems, lineTotal, subtotal, currency } from '@/components/estima
 import api, {
   portalApi,
   type Estimate,
+  type Photo,
   type ProjectDetail,
   type Proposal,
   type Report,
@@ -444,51 +445,18 @@ function CustomerPortalPageContent() {
                 </p>
               </div>
             ) : (
-              <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
-                {project.photos.map((photo) => {
+              <PhotoGalleriesByWindow
+                photos={project.photos}
+                onPhotoClick={(photo) => {
                   const thumbUrl = photo.thumbnail_url ? api.mediaUrl(photo.thumbnail_url) : api.mediaUrl(photo.storage_url);
                   const fullUrl = api.mediaUrl(photo.storage_url);
                   const translated = photo.notes ? translateShorthand(photo.notes) : null;
                   const note = translated ? formatNote(translated, photo.notes ?? '') : photo.notes ?? '';
-                  const windowLabel =
-                    translated?.windowLabel ||
-                    (photo.window_number ? `Window ${photo.window_number}${photo.panel_letter ?? ''}` : '');
-
-                  return (
-                    <button
-                      key={photo.id}
-                      type="button"
-                      onClick={() => {
-                        setModalSrc(fullUrl);
-                        setModalCaption([windowLabel, note].filter(Boolean).join(': '));
-                      }}
-                      className="group overflow-hidden rounded-[22px] border border-black/5 bg-white text-left shadow-[0_12px_30px_rgba(23,26,31,0.05)] transition hover:-translate-y-0.5 hover:shadow-[0_18px_36px_rgba(23,26,31,0.09)]"
-                    >
-                      <div className="relative aspect-[4/3] overflow-hidden bg-[#f1f0eb]">
-                        <img
-                          src={thumbUrl}
-                          alt={windowLabel || 'Project photo'}
-                          className="h-full w-full object-cover transition duration-300 group-hover:scale-[1.02]"
-                        />
-                        <span className="absolute right-3 top-3 flex h-9 w-9 items-center justify-center rounded-full bg-white/92 text-ssg-charcoal shadow-sm">
-                          <Eye size={16} />
-                        </span>
-                      </div>
-                      <div className="space-y-2 px-4 py-4">
-                        <div className="flex items-center gap-2">
-                          <span className="h-2 w-2 rounded-full bg-ssg-green" />
-                          <p className="truncate text-sm font-semibold text-ssg-charcoal">
-                            {windowLabel || 'Project photo'}
-                          </p>
-                        </div>
-                        <p className="line-clamp-2 text-sm leading-6 text-ssg-muted">
-                          {note || 'Assessment image'}
-                        </p>
-                      </div>
-                    </button>
-                  );
-                })}
-              </div>
+                  const windowLabel = translated?.windowLabel || (photo.window_number ? `Window ${photo.window_number}${photo.panel_letter ?? ''}` : '');
+                  setModalSrc(fullUrl);
+                  setModalCaption([windowLabel, note].filter(Boolean).join(': '));
+                }}
+              />
             )}
           </SectionCard>
 
@@ -762,6 +730,129 @@ function EstimateCard({
               {responding === 'decline' ? <Loader2 size={16} className="animate-spin" /> : <XCircle size={16} />}
               Decline
             </button>
+          </div>
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+// ── Photo Galleries By Window Component ───────────────────────────────────────
+
+interface PhotoGalleriesByWindowProps {
+  photos: Photo[];
+  onPhotoClick: (photo: Photo) => void;
+}
+
+function PhotoGalleriesByWindow({ photos, onPhotoClick }: PhotoGalleriesByWindowProps) {
+  // Group photos by window number (using the label field which is "1a", "1b", etc.)
+  const photosByWindow: Map<number, Photo[]> = new Map();
+  const unassignedPhotos: Photo[] = [];
+
+  photos.forEach((photo) => {
+    // Extract window number from label field (e.g., "1a" -> 1, "2f" -> 2)
+    const labelMatch = (photo as any).label?.match(/^(\d+)[a-z]?$/);
+    if (labelMatch) {
+      const windowNum = parseInt(labelMatch[1], 10);
+      if (!photosByWindow.has(windowNum)) {
+        photosByWindow.set(windowNum, []);
+      }
+      photosByWindow.get(windowNum)!.push(photo);
+    } else {
+      unassignedPhotos.push(photo);
+    }
+  });
+
+  const windowNumbers = Array.from(photosByWindow.keys()).sort((a, b) => a - b);
+
+  return (
+    <div className="space-y-6">
+      {windowNumbers.map((windowNum) => {
+        const windowPhotos = photosByWindow.get(windowNum) || [];
+        return (
+          <div key={windowNum} className="space-y-3">
+            <h4 className="text-lg font-semibold text-ssg-charcoal">Window {windowNum}</h4>
+            <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
+              {windowPhotos.map((photo) => {
+                const thumbUrl = photo.thumbnail_url ? api.mediaUrl(photo.thumbnail_url) : api.mediaUrl(photo.storage_url);
+                const label = (photo as any).label || '';
+                const translated = photo.notes ? translateShorthand(photo.notes) : null;
+                const note = translated ? formatNote(translated, photo.notes ?? '') : photo.notes ?? '';
+                
+                return (
+                  <button
+                    key={photo.id}
+                    type="button"
+                    onClick={() => onPhotoClick(photo)}
+                    className="group overflow-hidden rounded-[22px] border border-black/5 bg-white text-left shadow-[0_12px_30px_rgba(23,26,31,0.05)] transition hover:-translate-y-0.5 hover:shadow-[0_18px_36px_rgba(23,26,31,0.09)]"
+                  >
+                    <div className="relative aspect-[4/3] overflow-hidden bg-[#f1f0eb]">
+                      <img
+                        src={thumbUrl}
+                        alt={label}
+                        className="h-full w-full object-cover transition duration-300 group-hover:scale-[1.02]"
+                      />
+                      {/* Letter badge overlay */}
+                      <span className="absolute left-3 top-3 flex h-8 w-8 items-center justify-center rounded-full bg-white/95 text-sm font-semibold text-ssg-charcoal shadow-sm">
+                        {label.replace(/^\d+/, '')}
+                      </span>
+                      <span className="absolute right-3 top-3 flex h-9 w-9 items-center justify-center rounded-full bg-white/92 text-ssg-charcoal shadow-sm">
+                        <Eye size={16} />
+                      </span>
+                    </div>
+                    <div className="space-y-2 px-4 py-4">
+                      <p className="truncate text-sm font-semibold text-ssg-charcoal">
+                        {label}
+                      </p>
+                      <p className="line-clamp-2 text-sm leading-6 text-ssg-muted">
+                        {note || 'Assessment image'}
+                      </p>
+                    </div>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        );
+      })}
+
+      {unassignedPhotos.length > 0 ? (
+        <div className="space-y-3">
+          <h4 className="text-lg font-semibold text-ssg-charcoal">Unassigned Photos</h4>
+          <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
+            {unassignedPhotos.map((photo) => {
+              const thumbUrl = photo.thumbnail_url ? api.mediaUrl(photo.thumbnail_url) : api.mediaUrl(photo.storage_url);
+              const translated = photo.notes ? translateShorthand(photo.notes) : null;
+              const note = translated ? formatNote(translated, photo.notes ?? '') : photo.notes ?? '';
+              
+              return (
+                <button
+                  key={photo.id}
+                  type="button"
+                  onClick={() => onPhotoClick(photo)}
+                  className="group overflow-hidden rounded-[22px] border border-black/5 bg-white text-left shadow-[0_12px_30px_rgba(23,26,31,0.09)]"
+                >
+                  <div className="relative aspect-[4/3] overflow-hidden bg-[#f1f0eb]">
+                    <img
+                      src={thumbUrl}
+                      alt="Project photo"
+                      className="h-full w-full object-cover transition duration-300 group-hover:scale-[1.02]"
+                    />
+                    <span className="absolute right-3 top-3 flex h-9 w-9 items-center justify-center rounded-full bg-white/92 text-ssg-charcoal shadow-sm">
+                      <Eye size={16} />
+                    </span>
+                  </div>
+                  <div className="space-y-2 px-4 py-4">
+                    <p className="truncate text-sm font-semibold text-ssg-charcoal">
+                      Project photo
+                    </p>
+                    <p className="line-clamp-2 text-sm leading-6 text-ssg-muted">
+                      {note || 'Assessment image'}
+                    </p>
+                  </div>
+                </button>
+              );
+            })}
           </div>
         </div>
       ) : null}
