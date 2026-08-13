@@ -56,6 +56,7 @@ export default function CameraScreen() {
   const [capturedPhotos, setCapturedPhotos] = useState<CapturedPhoto[]>([]);
   const [capturing, setCapturing] = useState(false);
   const [loading, setLoading] = useState(true);
+  const [flashLabel, setFlashLabel] = useState<string | null>(null);
 
   useEffect(() => {
     if (!windowId) return;
@@ -127,6 +128,8 @@ export default function CameraScreen() {
       if (photo?.uri) {
         // Flash the label briefly
         await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+        setFlashLabel(nextLabel);
+        setTimeout(() => setFlashLabel(null), 600);
 
         const captured: CapturedPhoto = {
           id: `${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
@@ -206,6 +209,15 @@ export default function CameraScreen() {
         </View>
         <View style={{ width: 44 }} />
       </SafeAreaView>
+
+      {/* Letter flash overlay */}
+      {flashLabel && (
+        <View style={styles.flashOverlay}>
+          <View style={styles.flashBadge}>
+            <Text style={styles.flashText}>{flashLabel}</Text>
+          </View>
+        </View>
+      )}
 
       {/* Bottom: Thumbnail strip + shutter */}
       <SafeAreaView style={styles.bottomArea} edges={['bottom']}>
@@ -416,5 +428,31 @@ const styles = StyleSheet.create({
     color: Colors.white,
     fontWeight: '700',
     fontSize: 15,
+  },
+  flashOverlay: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    alignItems: 'center',
+    justifyContent: 'center',
+    pointerEvents: 'none',
+  },
+  flashBadge: {
+    backgroundColor: Colors.primary,
+    borderRadius: 20,
+    paddingHorizontal: 32,
+    paddingVertical: 20,
+    shadowColor: '#000',
+    shadowOpacity: 0.4,
+    shadowRadius: 16,
+    shadowOffset: { width: 0, height: 4 },
+    elevation: 8,
+  },
+  flashText: {
+    color: Colors.white,
+    fontSize: 48,
+    fontWeight: '700',
   },
 });

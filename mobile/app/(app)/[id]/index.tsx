@@ -23,6 +23,7 @@ import { PhotoThumbnail } from '@/components/PhotoThumbnail';
 import { WindowCard } from '@/components/WindowCard';
 import { useMounted } from '@/hooks/useMounted';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import * as uploadQueue from '@/services/uploadQueue';
 
 const STATUS_LABELS: Record<string, string> = {
   active: 'In Progress',
@@ -44,6 +45,7 @@ export default function ProjectDetailScreen() {
   const [newWindowNumber, setNewWindowNumber] = useState('');
   const [newWindowName, setNewWindowName] = useState('');
   const [creating, setCreating] = useState(false);
+  const [queueStatus, setQueueStatus] = useState({ queued: 0, uploading: 0, failed: 0, done: 0 });
 
   const fetchData = useCallback(async (silent = false) => {
     if (!id) return;
@@ -72,12 +74,15 @@ export default function ProjectDetailScreen() {
   useFocusEffect(
     useCallback(() => {
       fetchData(true);
+      // Refresh queue status
+      uploadQueue.getQueueStatus().then(setQueueStatus).catch(() => {});
     }, [fetchData]),
   );
 
   const onRefresh = () => {
     setRefreshing(true);
     fetchData(true);
+    uploadQueue.getQueueStatus().then(setQueueStatus).catch(() => {});
   };
 
   const openCreateWindow = () => {
@@ -183,6 +188,42 @@ export default function ProjectDetailScreen() {
             ) : null}
           </View>
 
+          {/* Upload queue status chip */}
+          {(queueStatus.uploading > 0 || queueStatus.failed > 0) && (
+            <TouchableOpacity
+              style={[styles.queueChip, queueStatus.failed > 0 && styles.queueChipError]}
+              onPress={() => Alert.alert(
+                'Upload Queue',
+                `${queueStatus.uploading} uploading\n${queueStatus.queued} queued\n${queueStatus.failed} failed${queueStatus.failed > 0 ? '\n\nTap retry to re-attempt failed uploads.' : ''}`,
+                queueStatus.failed > 0
+                  ? [
+                      { text: 'Cancel', style: 'cancel' },
+                      {
+                        text: 'Retry Failed',
+                        onPress: () => {
+                          uploadQueue.retryFailed().then(() => {
+                            uploadQueue.getQueueStatus().then(setQueueStatus).catch(() => {});
+                          }).catch(() => {});
+                        },
+                      },
+                    ]
+                  : [{ text: 'OK' }]
+              )}
+              activeOpacity={0.8}
+            >
+              <Ionicons
+                name={queueStatus.failed > 0 ? 'alert-circle' : 'cloud-upload-outline'}
+                size={16}
+                color={queueStatus.failed > 0 ? Colors.white : Colors.primary}
+              />
+              <Text style={[styles.queueChipText, queueStatus.failed > 0 && styles.queueChipTextError]}>
+                {queueStatus.uploading > 0 && `${queueStatus.uploading} uploading`}
+                {queueStatus.uploading > 0 && queueStatus.failed > 0 && ' · '}
+                {queueStatus.failed > 0 && `${queueStatus.failed} failed`}
+              </Text>
+            </TouchableOpacity>
+          )}
+
           {/* Windows section */}
           <View style={styles.section}>
             <View style={styles.sectionHeader}>
@@ -196,8 +237,16 @@ export default function ProjectDetailScreen() {
                 <Ionicons name="grid-outline" size={48} color={Colors.border} />
                 <Text style={styles.emptyText}>No windows yet</Text>
                 <Text style={styles.emptySubtext}>
-                  Create a window to start capturing photos in organized groups.
+                  Windows organize your photos into labeled groups.
                 </Text>
+                <TouchableOpacity
+                  style={styles.emptyActionBtn}
+                  onPress={openCreateWindow}
+                  activeOpacity={0.8}
+                >
+                  <Ionicons name="add-circle-outline" size={20} color={Colors.white} />
+                  <Text style={styles.emptyActionText}>Create Window 1</Text>
+                </TouchableOpacity>
               </View>
             ) : (
               windows.map((window) => (
@@ -377,6 +426,30 @@ const styles = StyleSheet.create({
     color: Colors.textDark,
     lineHeight: 18,
   },
+  queueChip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    backgroundColor: Colors.primaryLight,
+    borderRadius: 10,
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    marginBottom: 16,
+    borderWidth: 1,
+    borderColor: Colors.primary,
+  },
+  queueChipError: {
+    backgroundColor: '#D0342C',
+    borderColor: '#A02920',
+  },
+  queueChipText: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: Colors.primary,
+  },
+  queueChipTextError: {
+    color: Colors.white,
+  },
   section: {
     marginBottom: 20,
   },
@@ -410,6 +483,22 @@ const styles = StyleSheet.create({
     textAlign: 'center',
     lineHeight: 18,
     paddingHorizontal: 20,
+  },
+  emptyActionBtn: {
+    height: 48,
+    backgroundColor: Colors.primary,
+    borderRadius: 12,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    paddingHorizontal: 24,
+    marginTop: 12,
+  },
+  emptyActionText: {
+    color: Colors.white,
+    fontSize: 15,
+    fontWeight: '700',
   },
   addWindowBtn: {
     height: 56,
