@@ -943,7 +943,7 @@ export default function PhotosTab({ project, onRefresh }: Props) {
 
       {modalPhoto ? (
         <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/70 p-0 md:items-center md:p-6" onClick={() => void closePhotoModal()}>
-          <div className="max-h-[95vh] w-full overflow-hidden rounded-t-[2rem] bg-white md:max-w-6xl md:rounded-[2rem]" onClick={(event) => event.stopPropagation()}>
+          <div className="max-h-[95vh] w-full overflow-y-auto overscroll-contain rounded-t-[2rem] bg-white md:max-w-6xl md:overflow-hidden md:rounded-[2rem]" onClick={(event) => event.stopPropagation()}>
             <div className="grid gap-0 md:grid-cols-[minmax(0,1.2fr)_24rem]">
               <div
                 className="relative bg-black"
@@ -993,7 +993,7 @@ export default function PhotosTab({ project, onRefresh }: Props) {
                 <button type="button" onClick={() => void goToNextModalPhoto()} disabled={modalPhotoIndex === project.photos.length - 1} className="absolute right-3 top-1/2 z-10 -translate-y-1/2 rounded-full bg-white/90 p-2 text-ssg-charcoal shadow disabled:opacity-40"><ChevronRight size={20} /></button>
               </div>
 
-              <div className="space-y-4 p-5">
+              <div className="space-y-4 p-5 md:max-h-[95vh] md:overflow-y-auto">
                 <div className="flex items-start justify-between gap-3">
                   <div>
                     <div className="rounded-full bg-ssg-light px-2.5 py-1 text-xs font-semibold text-ssg-green">{displayPhotoLabel(modalPhoto)}</div>
