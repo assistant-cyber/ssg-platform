@@ -60,19 +60,19 @@ def extract_cover_photo_id(narrative: Optional[Dict[str, Any]]) -> Optional[str]
 
 
 def extract_condition_schedule_title(narrative: Optional[Dict[str, Any]]) -> str:
-    """Return the Appendix 4 title, if present."""
+    """Return the condition schedule title, if present."""
     title = extract_meta(narrative).get("condition_schedule_title")
     return title.strip() if isinstance(title, str) and title.strip() else DEFAULT_CONDITION_SCHEDULE_TITLE
 
 
 def extract_condition_schedule_intro(narrative: Optional[Dict[str, Any]]) -> str:
-    """Return the Appendix 4 intro copy, if present."""
+    """Return the condition schedule intro copy, if present."""
     intro = extract_meta(narrative).get("condition_schedule_intro")
     return intro.strip() if isinstance(intro, str) and intro.strip() else DEFAULT_CONDITION_SCHEDULE_INTRO
 
 
 def extract_condition_schedule_rows(narrative: Optional[Dict[str, Any]]) -> List[Dict[str, Any]]:
-    """Return validated Appendix 4 rows from report metadata."""
+    """Return validated condition schedule rows from report metadata."""
     rows = extract_meta(narrative).get("condition_schedule_rows")
     if not isinstance(rows, list):
         return []

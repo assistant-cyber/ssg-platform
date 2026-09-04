@@ -1212,6 +1212,10 @@ def build_elevation_pages(story, elevation_photos: list, styles, content_width: 
     if not usable:
         return
 
+    # Add appendix title before the first elevation page
+    story.append(Paragraph('<font color="#72B034">■</font> Appendix 4: Elevation Reference Photos', styles["AppendixTitle"]))
+    story.append(Spacer(1, 12))
+
     max_height = 7.3 * inch
     for photo in usable:
         title = (photo.get("elevation") or "").strip()
