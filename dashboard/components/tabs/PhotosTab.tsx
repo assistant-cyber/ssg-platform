@@ -11,6 +11,7 @@ import {
   ImagePlus,
   Loader2,
   Mic,
+  Sparkles,
   Trash2,
   X,
 } from 'lucide-react';
@@ -152,6 +153,13 @@ export default function PhotosTab({ project, onRefresh }: Props) {
   const [dimDepth, setDimDepth] = useState('');
   const [savingDimensions, setSavingDimensions] = useState(false);
   const [imageOverlayRect, setImageOverlayRect] = useState<{ width: number; height: number; left: number; top: number } | null>(null);
+  const [aiPanes, setAiPanes] = useState('');
+  const [aiPanels, setAiPanels] = useState('');
+  const [aiSqft, setAiSqft] = useState('');
+  const [aiPieces, setAiPieces] = useState('');
+  const [analyzingPhoto, setAnalyzingPhoto] = useState(false);
+  const [analyzeError, setAnalyzeError] = useState<string | null>(null);
+  const [savingAiFields, setSavingAiFields] = useState(false);
 
   const libraryInputRef = useRef<HTMLInputElement | null>(null);
   const cameraInputRef = useRef<HTMLInputElement | null>(null);
@@ -318,6 +326,11 @@ export default function PhotosTab({ project, onRefresh }: Props) {
     setDimWidth(modalPhoto?.dim_width != null ? String(modalPhoto.dim_width) : '');
     setDimHeight(modalPhoto?.dim_height != null ? String(modalPhoto.dim_height) : '');
     setDimDepth(modalPhoto?.dim_depth != null ? String(modalPhoto.dim_depth) : '');
+    setAiPanes(modalPhoto?.ai_panes != null ? String(modalPhoto.ai_panes) : '');
+    setAiPanels(modalPhoto?.ai_panels != null ? String(modalPhoto.ai_panels) : '');
+    setAiSqft(modalPhoto?.ai_sqft != null ? String(modalPhoto.ai_sqft) : '');
+    setAiPieces(modalPhoto?.ai_pieces != null ? String(modalPhoto.ai_pieces) : '');
+    setAnalyzeError(null);
   }, [modalPhoto?.id]);
 
   useEffect(() => {
@@ -613,6 +626,59 @@ export default function PhotosTab({ project, onRefresh }: Props) {
     setDimHeight(heightStr);
     setDimDepth(depthStr);
     void commitDimensions(widthStr, heightStr, depthStr);
+  };
+
+  // ── AI Window Analysis ─────────────────────────────────────────────────────
+
+  const parseAiInt = (raw: string): number | null => {
+    const trimmed = raw.trim();
+    if (!trimmed) return null;
+    const value = parseInt(trimmed, 10);
+    return Number.isFinite(value) && value >= 0 ? value : null;
+  };
+
+  const parseAiFloat = (raw: string): number | null => {
+    const trimmed = raw.trim();
+    if (!trimmed) return null;
+    const value = parseFloat(trimmed);
+    return Number.isFinite(value) && value >= 0 ? value : null;
+  };
+
+  const analyzePhotoWithAi = async () => {
+    if (!modalPhoto || analyzingPhoto) return;
+    setAnalyzingPhoto(true);
+    setAnalyzeError(null);
+    try {
+      const updated = await api.analyzePhoto(modalPhoto.id);
+      setAiPanes(updated.ai_panes != null ? String(updated.ai_panes) : '');
+      setAiPanels(updated.ai_panels != null ? String(updated.ai_panels) : '');
+      setAiSqft(updated.ai_sqft != null ? String(updated.ai_sqft) : '');
+      setAiPieces(updated.ai_pieces != null ? String(updated.ai_pieces) : '');
+      await onRefresh();
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : 'Analysis failed';
+      setAnalyzeError(msg);
+    } finally {
+      setAnalyzingPhoto(false);
+    }
+  };
+
+  const commitAiFields = async () => {
+    if (!modalPhoto || savingAiFields) return;
+    setSavingAiFields(true);
+    try {
+      await api.updatePhoto(modalPhoto.id, {
+        ai_panes: parseAiInt(aiPanes),
+        ai_panels: parseAiInt(aiPanels),
+        ai_sqft: parseAiFloat(aiSqft),
+        ai_pieces: parseAiInt(aiPieces),
+      });
+      await onRefresh();
+    } catch {
+      // Best-effort blur save
+    } finally {
+      setSavingAiFields(false);
+    }
   };
 
   // Converts a click/drag position into a percentage relative to the actual
@@ -1259,6 +1325,84 @@ export default function PhotosTab({ project, onRefresh }: Props) {
                     </div>
                   ) : null}
                 </div>
+
+                {!modalPhoto.is_elevation ? (
+                  <div className="rounded-2xl border border-black/10 p-4">
+                    <div className="mb-3 flex items-center justify-between gap-3">
+                      <label className="label">Window Analysis</label>
+                      <button
+                        type="button"
+                        onClick={() => void analyzePhotoWithAi()}
+                        disabled={analyzingPhoto}
+                        className="inline-flex min-h-[44px] items-center gap-2 rounded-xl bg-ssg-green px-4 py-2 text-sm font-medium text-white transition hover:bg-ssg-green/90 disabled:opacity-50 md:min-h-0 md:py-1.5"
+                      >
+                        {analyzingPhoto ? <Loader2 size={14} className="animate-spin" /> : <Sparkles size={14} />}
+                        {analyzingPhoto ? 'Analyzing…' : 'Analyze with AI'}
+                      </button>
+                    </div>
+
+                    <div className="mt-2 grid grid-cols-2 gap-2">
+                      <div>
+                        <label className="mb-1 block text-xs text-ssg-muted">Panes/Sections</label>
+                        <input
+                          type="number"
+                          inputMode="numeric"
+                          placeholder="0"
+                          className="input h-11 text-sm md:h-9"
+                          value={aiPanes}
+                          onChange={(event) => setAiPanes(event.target.value)}
+                          onBlur={() => void commitAiFields()}
+                        />
+                      </div>
+                      <div>
+                        <label className="mb-1 block text-xs text-ssg-muted">Panels</label>
+                        <input
+                          type="number"
+                          inputMode="numeric"
+                          placeholder="0"
+                          className="input h-11 text-sm md:h-9"
+                          value={aiPanels}
+                          onChange={(event) => setAiPanels(event.target.value)}
+                          onBlur={() => void commitAiFields()}
+                        />
+                      </div>
+                      <div>
+                        <label className="mb-1 block text-xs text-ssg-muted">Total sqft</label>
+                        <input
+                          type="number"
+                          inputMode="decimal"
+                          placeholder="0.0"
+                          className="input h-11 text-sm md:h-9"
+                          value={aiSqft}
+                          onChange={(event) => setAiSqft(event.target.value)}
+                          onBlur={() => void commitAiFields()}
+                        />
+                      </div>
+                      <div>
+                        <label className="mb-1 block text-xs text-ssg-muted">Pieces</label>
+                        <input
+                          type="number"
+                          inputMode="numeric"
+                          placeholder="0"
+                          className="input h-11 text-sm md:h-9"
+                          value={aiPieces}
+                          onChange={(event) => setAiPieces(event.target.value)}
+                          onBlur={() => void commitAiFields()}
+                        />
+                      </div>
+                    </div>
+
+                    {savingAiFields ? <p className="mt-1 text-xs text-ssg-muted">Saved</p> : null}
+
+                    {analyzeError ? (
+                      <p className="mt-2 text-xs text-red-600">{analyzeError}</p>
+                    ) : null}
+
+                    {modalPhoto.ai_analysis_notes && !analyzeError ? (
+                      <p className="mt-2 text-xs text-ssg-muted">{modalPhoto.ai_analysis_notes}</p>
+                    ) : null}
+                  </div>
+                ) : null}
 
                 <div>
                   <div className="mb-2 flex items-center justify-between gap-2">
