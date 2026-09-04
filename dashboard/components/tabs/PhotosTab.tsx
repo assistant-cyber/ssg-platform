@@ -151,6 +151,7 @@ export default function PhotosTab({ project, onRefresh }: Props) {
   const [dimHeight, setDimHeight] = useState('');
   const [dimDepth, setDimDepth] = useState('');
   const [savingDimensions, setSavingDimensions] = useState(false);
+  const [imageOverlayRect, setImageOverlayRect] = useState<{ width: number; height: number; left: number; top: number } | null>(null);
 
   const libraryInputRef = useRef<HTMLInputElement | null>(null);
   const cameraInputRef = useRef<HTMLInputElement | null>(null);
@@ -161,6 +162,65 @@ export default function PhotosTab({ project, onRefresh }: Props) {
   const modalNoteRef = useRef('');
 
   useEffect(() => { modalNoteRef.current = modalNote; }, [modalNote]);
+
+  // Compute rendered image rectangle (accounting for object-contain letterboxing)
+  // and update on image load, window resize, or modalPhoto change
+  useEffect(() => {
+    const img = pinImageRef.current;
+    if (!img || !modalPhoto) {
+      setImageOverlayRect(null);
+      return;
+    }
+
+    const computeOverlayRect = () => {
+      const rect = img.getBoundingClientRect();
+      const naturalW = img.naturalWidth || rect.width;
+      const naturalH = img.naturalHeight || rect.height;
+      if (!naturalW || !naturalH || !rect.width || !rect.height) {
+        setImageOverlayRect(null);
+        return;
+      }
+
+      const containerRatio = rect.width / rect.height;
+      const imageRatio = naturalW / naturalH;
+      let renderedW = rect.width;
+      let renderedH = rect.height;
+      if (imageRatio > containerRatio) {
+        renderedH = rect.width / imageRatio;
+      } else {
+        renderedW = rect.height * imageRatio;
+      }
+      const offsetX = (rect.width - renderedW) / 2;
+      const offsetY = (rect.height - renderedH) / 2;
+
+      setImageOverlayRect({
+        width: renderedW,
+        height: renderedH,
+        left: offsetX,
+        top: offsetY,
+      });
+    };
+
+    // Compute on image load
+    if (img.complete && img.naturalWidth) {
+      computeOverlayRect();
+    } else {
+      img.addEventListener('load', computeOverlayRect);
+    }
+
+    // Recompute on window resize
+    window.addEventListener('resize', computeOverlayRect);
+
+    // ResizeObserver for container size changes
+    const resizeObserver = new ResizeObserver(computeOverlayRect);
+    resizeObserver.observe(img);
+
+    return () => {
+      img.removeEventListener('load', computeOverlayRect);
+      window.removeEventListener('resize', computeOverlayRect);
+      resizeObserver.disconnect();
+    };
+  }, [modalPhoto]);
 
   const queuePlans = useMemo(
     () => buildUploadDraftPlans(
@@ -589,9 +649,17 @@ export default function PhotosTab({ project, onRefresh }: Props) {
   };
 
   const handlePinImageClick = async (event: ReactMouseEvent<HTMLDivElement>) => {
-    if (!modalPhoto?.is_elevation || draggingPinId) return;
-    const point = percentFromPointer(event.clientX, event.clientY);
-    if (!point) return;
+    if (!modalPhoto?.is_elevation || draggingPinId || !imageOverlayRect) return;
+    
+    // Convert click coordinates to percentages within the rendered image area
+    const overlayX = event.clientX - event.currentTarget.getBoundingClientRect().left;
+    const overlayY = event.clientY - event.currentTarget.getBoundingClientRect().top;
+    
+    // Check if click is within the rendered image bounds
+    if (overlayX < 0 || overlayY < 0 || overlayX > imageOverlayRect.width || overlayY > imageOverlayRect.height) return;
+    
+    const x_pct = Math.min(100, Math.max(0, (overlayX / imageOverlayRect.width) * 100));
+    const y_pct = Math.min(100, Math.max(0, (overlayY / imageOverlayRect.height) * 100));
 
     // Optimistic pin with pending state (reduced opacity, no label yet)
     const optimisticId = `pending-${Date.now()}`;
@@ -599,8 +667,8 @@ export default function PhotosTab({ project, onRefresh }: Props) {
       id: optimisticId,
       photo_id: modalPhoto.id,
       project_id: modalPhoto.project_id,
-      x_pct: point.x_pct,
-      y_pct: point.y_pct,
+      x_pct,
+      y_pct,
       label: '?',  // Pending state; server assigns actual label
       color: 'red',
       sort_order: 0,  // Server assigns actual sort_order
@@ -609,8 +677,8 @@ export default function PhotosTab({ project, onRefresh }: Props) {
     try {
       // Server assigns label and sort_order atomically
       const saved = await api.createPin(modalPhoto.id, {
-        x_pct: point.x_pct,
-        y_pct: point.y_pct,
+        x_pct,
+        y_pct,
         label: undefined,  // Let server assign next label
         color: 'red',
         sort_order: undefined,  // Let server assign sort_order
@@ -689,12 +757,24 @@ export default function PhotosTab({ project, onRefresh }: Props) {
   };
 
   useEffect(() => {
-    if (!draggingPinId) return;
+    if (!draggingPinId || !imageOverlayRect) return;
 
     const handleMove = (event: PointerEvent) => {
-      const point = percentFromPointer(event.clientX, event.clientY);
-      if (!point) return;
-      setPins((current) => current.map((pin) => (pin.id === draggingPinId ? { ...pin, ...point } : pin)));
+      const img = pinImageRef.current;
+      if (!img) return;
+      
+      const containerRect = img.getBoundingClientRect();
+      const overlayX = event.clientX - containerRect.left - imageOverlayRect.left;
+      const overlayY = event.clientY - containerRect.top - imageOverlayRect.top;
+      
+      // Clamp to rendered image bounds
+      const clampedX = Math.max(0, Math.min(imageOverlayRect.width, overlayX));
+      const clampedY = Math.max(0, Math.min(imageOverlayRect.height, overlayY));
+      
+      const x_pct = Math.min(100, Math.max(0, (clampedX / imageOverlayRect.width) * 100));
+      const y_pct = Math.min(100, Math.max(0, (clampedY / imageOverlayRect.height) * 100));
+      
+      setPins((current) => current.map((pin) => (pin.id === draggingPinId ? { ...pin, x_pct, y_pct } : pin)));
     };
     const handleUp = async () => {
       const pinId = draggingPinId;
@@ -717,7 +797,7 @@ export default function PhotosTab({ project, onRefresh }: Props) {
       window.removeEventListener('pointerup', handleUp);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [draggingPinId]);
+  }, [draggingPinId, imageOverlayRect]);
 
   // ── Downloads ──────────────────────────────────────────────────────────────
 
@@ -962,29 +1042,43 @@ export default function PhotosTab({ project, onRefresh }: Props) {
                   ref={pinImageRef}
                   src={api.mediaUrl(modalPhoto.storage_url)}
                   alt={displayPhotoLabel(modalPhoto)}
-                  onClick={(event) => void handlePinImageClick(event)}
-                  className={['h-[42vh] w-full object-contain md:h-[76vh]', modalPhoto.is_elevation ? 'cursor-crosshair' : ''].join(' ')}
+                  className={['h-[42vh] w-full object-contain md:h-[76vh]', modalPhoto.is_elevation ? '' : ''].join(' ')}
                 />
-                {modalPhoto.is_elevation ? pins.map((pin) => {
-                  const isPending = pin.id.startsWith('pending-');
-                  return (
-                    <button
-                      key={pin.id}
-                      type="button"
-                      onPointerDown={(event) => handlePinPointerDown(event, pin.id)}
-                      style={{
-                        left: `${pin.x_pct}%`,
-                        top: `${pin.y_pct}%`,
-                        backgroundColor: PIN_COLOR_HEX[pin.color] ?? PIN_COLOR_HEX.red,
-                        opacity: isPending ? 0.5 : 1,
-                      }}
-                      className="absolute z-20 flex h-8 w-8 min-w-[32px] -translate-x-1/2 -translate-y-1/2 cursor-grab items-center justify-center rounded-full border-2 border-white text-xs font-bold text-white shadow active:cursor-grabbing"
-                      title={isPending ? 'Creating pin...' : `Pin ${pin.label} - drag to reposition`}
-                    >
-                      {pin.label}
-                    </button>
-                  );
-                }) : null}
+                {modalPhoto.is_elevation && imageOverlayRect ? (
+                  <div
+                    className="absolute cursor-crosshair"
+                    style={{
+                      left: `${imageOverlayRect.left}px`,
+                      top: `${imageOverlayRect.top}px`,
+                      width: `${imageOverlayRect.width}px`,
+                      height: `${imageOverlayRect.height}px`,
+                    }}
+                    onClick={(event) => void handlePinImageClick(event)}
+                  >
+                    {pins.map((pin) => {
+                      const isPending = pin.id.startsWith('pending-');
+                      return (
+                        <button
+                          key={pin.id}
+                          type="button"
+                          onPointerDown={(event) => handlePinPointerDown(event, pin.id)}
+                          onClick={(event) => event.stopPropagation()}
+                          style={{
+                            left: `${pin.x_pct}%`,
+                            top: `${pin.y_pct}%`,
+                            backgroundColor: PIN_COLOR_HEX[pin.color] ?? PIN_COLOR_HEX.red,
+                            opacity: isPending ? 0.5 : 1,
+                            touchAction: 'none',
+                          }}
+                          className="absolute z-20 flex h-8 w-8 min-w-[32px] -translate-x-1/2 -translate-y-1/2 cursor-grab items-center justify-center rounded-full border-2 border-white text-xs font-bold text-white shadow active:cursor-grabbing"
+                          title={isPending ? 'Creating pin...' : `Pin ${pin.label} - drag to reposition`}
+                        >
+                          {pin.label}
+                        </button>
+                      );
+                    })}
+                  </div>
+                ) : null}
                 {modalPhoto.is_elevation ? (
                   <div className="pointer-events-none absolute bottom-3 left-1/2 z-10 -translate-x-1/2 rounded-full bg-black/60 px-3 py-1 text-xs text-white">
                     Click the photo to drop a numbered pin
