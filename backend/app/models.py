@@ -154,6 +154,13 @@ class Photo(Base):
     dim_width = Column(Float, nullable=True)
     dim_height = Column(Float, nullable=True)
     dim_depth = Column(Float, nullable=True)
+    # AI vision analysis fields (staff-editable, populated via /photos/{id}/analyze)
+    ai_panes = Column(Integer, nullable=True)        # estimated number of panes/sections
+    ai_panels = Column(Integer, nullable=True)       # estimated number of panels
+    ai_sqft = Column(Float, nullable=True)           # estimated square footage
+    ai_pieces = Column(Integer, nullable=True)       # estimated glass piece count
+    ai_analyzed_at = Column(DateTime, nullable=True) # timestamp of last AI analysis
+    ai_analysis_notes = Column(Text, nullable=True)  # short caveats (e.g. 'partially obscured')
 
     # Relationships
     project = relationship("Project", back_populates="photos")
