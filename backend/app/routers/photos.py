@@ -832,3 +832,193 @@ def renumber_photo_pins(
         db.refresh(pin)
     
     return [PhotoPinOut.model_validate(pin) for pin in pins]
+
+
+# ─── AI Vision Analysis ───────────────────────────────────────────────────────
+
+@router.post("/photos/{photo_id}/analyze", response_model=PhotoOut)
+def analyze_photo_with_ai(
+    photo_id: str,
+    current_user: User = Depends(require_staff),
+    db: Session = Depends(get_db),
+):
+    """Run AI vision analysis on a window photo to estimate panes, panels, sqft, pieces.
+    
+    Uses Claude Sonnet 4.5 vision to analyze the photo and extract:
+    - panes: number of panes/sections
+    - panels: number of panels
+    - estimated_sqft: square footage (validated against dim_width/dim_height if set)
+    - pieces: glass piece count
+    - confidence: high/medium/low
+    - notes: short caveats
+    
+    Results are stored in ai_* columns and are staff-editable via PATCH /photos/{id}.
+    Re-running this overwrites previous AI values (but not staff edits to other fields).
+    
+    Requires ANTHROPIC_API_KEY in environment.
+    Returns 503 if key is missing.
+    Returns 502 if vision API fails.
+    """
+    from datetime import datetime
+    from app.config import settings
+    
+    # Check API key
+    if not settings.ANTHROPIC_API_KEY:
+        raise HTTPException(
+            status_code=503,
+            detail="AI vision analysis unavailable: ANTHROPIC_API_KEY not configured"
+        )
+    
+    photo = db.query(Photo).filter(Photo.id == photo_id).first()
+    if not photo:
+        raise HTTPException(status_code=404, detail="Photo not found")
+    
+    # Load photo bytes and downscale if needed
+    try:
+        photo_bytes = storage.download_bytes(photo.storage_url)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to load photo: {e}")
+    
+    # Downscale to max 1568px long edge for vision API
+    import io
+    from PIL import Image as PILImage
+    import base64
+    
+    try:
+        img = PILImage.open(io.BytesIO(photo_bytes))
+        max_dimension = 1568
+        
+        # Calculate scaling
+        width, height = img.size
+        if max(width, height) > max_dimension:
+            scale = max_dimension / max(width, height)
+            new_width = int(width * scale)
+            new_height = int(height * scale)
+            img = img.resize((new_width, new_height), PILImage.LANCZOS)
+        
+        # Convert to JPEG bytes
+        if img.mode in ("RGBA", "P", "LA"):
+            img = img.convert("RGB")
+        
+        buf = io.BytesIO()
+        img.save(buf, format="JPEG", quality=85, optimize=True)
+        image_data = base64.standard_b64encode(buf.getvalue()).decode("utf-8")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to process image: {e}")
+    
+    # Build prompt
+    prompt_parts = [
+        "Analyze this stained-glass window photo and estimate the following (respond with ONLY a JSON object):",
+        "",
+        "Required JSON format:",
+        "{",
+        '  "panes": <integer, number of distinct panes or sections>,',
+        '  "panels": <integer, number of panels>,',
+        '  "estimated_sqft": <float or null>,',
+        '  "pieces": <integer, estimated total glass pieces>,',
+        '  "confidence": "high" | "medium" | "low",',
+        '  "notes": "<short caveats, e.g. \'partially obscured\', \'unclear angle\'>"',
+        "}",
+        "",
+    ]
+    
+    # Add dimension context if available
+    if photo.dim_width and photo.dim_height:
+        sqft = (photo.dim_width * photo.dim_height) / 144.0
+        prompt_parts.append(
+            f"The staff recorded dimensions: {photo.dim_width}\" W x {photo.dim_height}\" H "
+            f"(~{sqft:.1f} sqft). Use this for sqft validation."
+        )
+    else:
+        prompt_parts.append(
+            "No physical dimensions recorded. Only estimate sqft if you can infer scale from context, otherwise return null."
+        )
+    
+    prompt_parts.append("")
+    prompt_parts.append("If this is NOT a stained-glass window, set notes to explain what it is and return zeros/nulls for counts.")
+    
+    prompt = "\n".join(prompt_parts)
+    
+    # Call Anthropic vision API
+    try:
+        from anthropic import Anthropic
+        import json
+        import re
+        
+        client = Anthropic(api_key=settings.ANTHROPIC_API_KEY)
+        response = client.messages.create(
+            model="claude-sonnet-4-5",
+            max_tokens=800,
+            temperature=0.0,
+            messages=[{
+                "role": "user",
+                "content": [
+                    {
+                        "type": "image",
+                        "source": {
+                            "type": "base64",
+                            "media_type": "image/jpeg",
+                            "data": image_data,
+                        },
+                    },
+                    {
+                        "type": "text",
+                        "text": prompt,
+                    },
+                ],
+            }],
+        )
+        
+        # Extract text from response
+        raw_text = " ".join(
+            block_text
+            for block in response.content
+            for block_text in [getattr(block, "text", None)]
+            if isinstance(block_text, str)
+        ).strip()
+        
+        # Parse JSON (defensively - may be wrapped in prose or code fences)
+        json_match = re.search(r'\{[^{}]*"panes"[^{}]*\}', raw_text, re.DOTALL)
+        if json_match:
+            json_str = json_match.group(0)
+        else:
+            # Fallback: try the whole response
+            json_str = raw_text
+            # Strip markdown code fences if present
+            if json_str.startswith("```"):
+                json_str = re.sub(r"^```(?:json)?\s*", "", json_str)
+                json_str = re.sub(r"\s*```$", "", json_str)
+        
+        payload = json.loads(json_str)
+        
+        # Extract fields
+        ai_panes = payload.get("panes")
+        ai_panels = payload.get("panels")
+        ai_sqft = payload.get("estimated_sqft")
+        ai_pieces = payload.get("pieces")
+        confidence = payload.get("confidence", "medium")
+        notes = payload.get("notes", "")
+        
+        # Store in DB
+        photo.ai_panes = ai_panes if isinstance(ai_panes, int) else None
+        photo.ai_panels = ai_panels if isinstance(ai_panels, int) else None
+        photo.ai_sqft = float(ai_sqft) if ai_sqft is not None and ai_sqft != "" else None
+        photo.ai_pieces = ai_pieces if isinstance(ai_pieces, int) else None
+        photo.ai_analyzed_at = datetime.utcnow()
+        photo.ai_analysis_notes = notes[:500] if notes else None  # cap at 500 chars
+        
+        db.commit()
+        db.refresh(photo)
+        
+        return PhotoOut.model_validate(photo)
+        
+    except json.JSONDecodeError as e:
+        raise HTTPException(
+            status_code=502,
+            detail=f"Vision API returned invalid JSON: {e}"
+        )
+    except Exception as e:
+        raise HTTPException(
+            status_code=502,
+            detail=f"Vision API call failed: {e}"
+        )
