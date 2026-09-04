@@ -349,11 +349,16 @@ def _generate_ai_report_draft(
     photos: list[Photo],
     additional_context: str,
     voice: str,
+    db: Session,
 ) -> dict:
     fallback = _fallback_ai_report_draft(project, photos, additional_context, voice)
     if not settings.ANTHROPIC_API_KEY:
         return fallback
 
+    # Aggregate all available project data for the Overview section
+    from processing.overview_data import aggregate_overview_data
+    overview_data = aggregate_overview_data(project.id, db)
+    
     prompt = f"""
 You are writing a stained glass assessment report for Scottish Stained Glass.
 
@@ -369,6 +374,8 @@ Instructions:
 - Only reference facts that are supported by the project data and field notes below.
 - When the field notes support it, mention specific window or panel references such as 1A, 2B, or north elevation in the prose so the reader can connect the report text to the actual photos.
 - Choose section photo_ids that directly match the problems discussed in each section.
+- For the Overview & Valuation section, cite the real window count, total square footage, piece counts, and condition rollup from the structured data below.
+- If estimate data exists, provide a rough valuation frame in the Overview section based on the estimate total.
 - Return valid JSON only.
 - Use this shape exactly:
 {{
@@ -387,6 +394,9 @@ Instructions:
 
 Project context:
 {_project_snapshot(project, photos)}
+
+Structured data summary (use these real numbers in the Overview section):
+{json.dumps(overview_data, indent=2)}
 
 Additional user context:
 {additional_context.strip() or "None provided"}
@@ -651,7 +661,18 @@ def _generate_report_task(
         # computed from the same photo notes the condition sheet just parsed,
         # so the PDF's numbers always agree with the spreadsheet's.
         from processing.condition_sheet import compute_overview_stats_from_photos, build_condition_schedule_rows_from_photos
+        from processing.overview_data import aggregate_overview_data
+        
         overview_stats = compute_overview_stats_from_photos(all_photos_dicts, mode=parsing_mode)
+        
+        # Enhance overview_stats with aggregated AI vision data (ai_* fields take priority)
+        aggregated = aggregate_overview_data(project_id, db)
+        if aggregated["totals"]["total_sqft"] > 0:
+            overview_stats["total_overall_sqft"] = int(aggregated["totals"]["total_sqft"])
+        if aggregated["totals"]["total_pieces"] > 0:
+            overview_stats["total_pieces"] = aggregated["totals"]["total_pieces"]
+        if aggregated["totals"]["total_panels"] > 0:
+            overview_stats["total_panels_logged"] = aggregated["totals"]["total_panels"]
 
         # Appendix 4's condition-schedule table used to come straight from
         # the dashboard's client-side derivation (deriveConditionScheduleRows
@@ -955,6 +976,7 @@ def generate_ai_report_draft(
         photos=photos,
         additional_context=body.additional_context,
         voice=body.voice,
+        db=db,
     )
     report = _upsert_report_draft(db, project_id, current_user.id, draft)
     return ReportOut.model_validate(report)
