@@ -55,6 +55,7 @@ export default function ReportTab({ project, onRefresh }: Props) {
   const [aiContext, setAiContext] = useState('');
   const [aiWriting, setAiWriting] = useState(false);
   const [aiError, setAiError] = useState<string | null>(null);
+  const [saveError, setSaveError] = useState<string | null>(null);
   const [isDraftDirty, setIsDraftDirty] = useState(false);
   const [replacementValue, setReplacementValue] = useState<string>(
     project.replacement_value != null ? String(project.replacement_value) : ''
@@ -100,11 +101,14 @@ export default function ReportTab({ project, onRefresh }: Props) {
 
   const saveDraft = async (nextDraft = draft) => {
     setSaving(true);
+    setSaveError(null);
     try {
       const saved = await api.saveReportDraft(project.id, nextDraft);
       setReport(saved);
       setDraft(reportDraftFromNarrative(saved.narrative, project));
       await onRefresh();
+    } catch (error) {
+      setSaveError(error instanceof Error ? error.message : 'Failed to save draft. Please try again.');
     } finally {
       setSaving(false);
     }
@@ -115,9 +119,12 @@ export default function ReportTab({ project, onRefresh }: Props) {
     const parsed = trimmed === '' ? null : Number(trimmed.replace(/[^0-9.]/g, ''));
     if (parsed !== null && Number.isNaN(parsed)) return;
     setSavingValuation(true);
+    setSaveError(null);
     try {
       await api.updateProject(project.id, { [field]: parsed } as Partial<typeof project>);
       await onRefresh();
+    } catch (error) {
+      setSaveError(error instanceof Error ? error.message : 'Failed to save valuation. Please try again.');
     } finally {
       setSavingValuation(false);
     }
@@ -429,6 +436,12 @@ export default function ReportTab({ project, onRefresh }: Props) {
               {aiError ? (
                 <div className="rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
                   {aiError}
+                </div>
+              ) : null}
+
+              {saveError ? (
+                <div className="rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+                  {saveError}
                 </div>
               ) : null}
             </div>
