@@ -1027,8 +1027,17 @@ export default function PhotosTab({ project, onRefresh }: Props) {
             <div className="grid gap-0 md:grid-cols-[minmax(0,1.2fr)_24rem]">
               <div
                 className="relative bg-black"
-                onTouchStart={(event) => { const touch = event.changedTouches[0]; if (touch) (event.currentTarget as HTMLDivElement).dataset.touchX = String(touch.clientX); }}
+                onTouchStart={(event) => {
+                  // Only handle swipe navigation if NOT touching a pin or the overlay
+                  const target = event.target as HTMLElement;
+                  if (target.closest('[data-pin-overlay]') || target.closest('button[data-pin]')) return;
+                  const touch = event.changedTouches[0];
+                  if (touch) (event.currentTarget as HTMLDivElement).dataset.touchX = String(touch.clientX);
+                }}
                 onTouchEnd={(event) => {
+                  // Only handle swipe navigation if NOT touching a pin or the overlay
+                  const target = event.target as HTMLElement;
+                  if (target.closest('[data-pin-overlay]') || target.closest('button[data-pin]')) return;
                   const touch = event.changedTouches[0];
                   const start = Number((event.currentTarget as HTMLDivElement).dataset.touchX ?? '0');
                   if (!touch || !start) return;
@@ -1046,6 +1055,7 @@ export default function PhotosTab({ project, onRefresh }: Props) {
                 />
                 {modalPhoto.is_elevation && imageOverlayRect ? (
                   <div
+                    data-pin-overlay
                     className="absolute cursor-crosshair"
                     style={{
                       left: `${imageOverlayRect.left}px`,
@@ -1061,6 +1071,7 @@ export default function PhotosTab({ project, onRefresh }: Props) {
                         <button
                           key={pin.id}
                           type="button"
+                          data-pin
                           onPointerDown={(event) => handlePinPointerDown(event, pin.id)}
                           onClick={(event) => event.stopPropagation()}
                           style={{
