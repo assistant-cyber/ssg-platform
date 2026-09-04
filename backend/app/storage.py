@@ -221,12 +221,28 @@ class StorageService:
             shutil.rmtree(project_dir, ignore_errors=True)
 
     def _upload_s3(self, file_bytes: bytes, key: str, content_type: str) -> None:
-        self._s3.put_object(
-            Bucket=self._bucket,
-            Key=key,
-            Body=file_bytes,
-            ContentType=content_type,
-        )
+        try:
+            self._s3.put_object(
+                Bucket=self._bucket,
+                Key=key,
+                Body=file_bytes,
+                ContentType=content_type,
+            )
+        except Exception as e:
+            # Surface the real HTTP status + body from Supabase so it appears
+            # in Railway logs instead of the opaque "An error occurred ()" message.
+            import logging
+            resp = getattr(e, "response", None) or {}
+            meta = resp.get("ResponseMetadata", {})
+            err  = resp.get("Error", {})
+            logging.error(
+                "[storage._upload_s3] PUT failed: HTTP %s | code=%r | msg=%r | key=%s",
+                meta.get("HTTPStatusCode", "?"),
+                err.get("Code", "?"),
+                err.get("Message", "?"),
+                key,
+            )
+            raise
 
     def _delete_project_files_s3(self, prefix: str) -> None:
         paginator = self._s3.get_paginator("list_objects_v2")
