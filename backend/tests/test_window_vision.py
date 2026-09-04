@@ -1,0 +1,453 @@
+"""Tests for AI vision analysis of stained-glass window photos."""
+import sys
+from pathlib import Path
+from unittest.mock import Mock, patch
+from datetime import datetime
+
+# Add backend to path for imports
+sys.path.insert(0, str(Path(__file__).parent.parent))
+
+import pytest
+from fastapi.testclient import TestClient
+from sqlalchemy import create_engine
+from sqlalchemy.orm import sessionmaker
+from sqlalchemy.pool import StaticPool
+
+from app.database import Base, get_db
+from main import app
+from app.models import Photo, Project, User, new_uuid
+from app.dependencies import hash_pin
+
+
+# ── Test fixtures ─────────────────────────────────────────────────────────────
+
+@pytest.fixture(scope="function")
+def test_db():
+    """In-memory SQLite database for each test.
+
+    StaticPool is required: without it every pooled connection gets its own
+    empty :memory: database, so tables created via create_all are invisible
+    to the session/TestClient connections ("no such table" errors).
+    """
+    engine = create_engine(
+        "sqlite:///:memory:",
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+    )
+    TestingSessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+    Base.metadata.create_all(bind=engine)
+
+    db = TestingSessionLocal()
+    try:
+        yield db
+    finally:
+        db.close()
+
+
+@pytest.fixture(scope="function")
+def client(test_db):
+    """FastAPI test client with dependency override."""
+    def override_get_db():
+        try:
+            yield test_db
+        finally:
+            pass
+
+    app.dependency_overrides[get_db] = override_get_db
+    with TestClient(app) as c:
+        yield c
+    app.dependency_overrides.clear()
+
+
+@pytest.fixture(scope="function")
+def staff_user(test_db):
+    """Staff user for auth."""
+    user = User(
+        id=new_uuid(),
+        name="Test Staff",
+        role="staff",
+        pin_hash="fake_hash_staff",  # Won't be used for token-based auth
+        is_active=True,
+    )
+    test_db.add(user)
+    test_db.commit()
+    test_db.refresh(user)
+    return user
+
+
+@pytest.fixture(scope="function")
+def customer_user(test_db, project):
+    """Customer user linked to project."""
+    user = User(
+        id=new_uuid(),
+        name="Test Customer",
+        role="customer",
+        pin_hash="fake_hash_customer",  # Won't be used for token-based auth
+        is_active=True,
+        linked_project_id=project.id,
+    )
+    test_db.add(user)
+    test_db.commit()
+    test_db.refresh(user)
+    return user
+
+
+@pytest.fixture(scope="function")
+def staff_headers(client, staff_user):
+    """Auth headers for staff user."""
+    # Create JWT token directly bypassing login
+    from app.security import create_access_token
+    token = create_access_token({"sub": staff_user.id, "role": staff_user.role})
+    return {"Authorization": f"Bearer {token}"}
+
+
+@pytest.fixture(scope="function")
+def customer_headers(client, customer_user):
+    """Auth headers for customer user."""
+    # Create JWT token directly bypassing login
+    from app.security import create_access_token
+    token = create_access_token({"sub": customer_user.id, "role": customer_user.role})
+    return {"Authorization": f"Bearer {token}"}
+
+
+@pytest.fixture(scope="function")
+def project(test_db):
+    """Test project."""
+    proj = Project(
+        id=new_uuid(),
+        name="Test Church",
+        status="assessment",
+    )
+    test_db.add(proj)
+    test_db.commit()
+    test_db.refresh(proj)
+    return proj
+
+
+@pytest.fixture(scope="function")
+def photo(test_db, project):
+    """Test photo with fake storage URL."""
+    p = Photo(
+        id=new_uuid(),
+        project_id=project.id,
+        storage_url="/media/test/photo.jpg",
+        original_filename="test_window.jpg",
+        notes="1A warping moderate",
+        window_number="1",
+        panel_letter="A",
+    )
+    test_db.add(p)
+    test_db.commit()
+    test_db.refresh(p)
+    return p
+
+
+# ── Test: Missing API key ─────────────────────────────────────────────────────
+
+def test_analyze_missing_api_key(client, staff_headers, photo):
+    """POST /photos/{id}/analyze returns 503 when ANTHROPIC_API_KEY is not set."""
+    with patch("app.config.settings.ANTHROPIC_API_KEY", None):
+        response = client.post(
+            f"/photos/{photo.id}/analyze",
+            headers=staff_headers,
+        )
+        assert response.status_code == 503
+        assert "ANTHROPIC_API_KEY not configured" in response.json()["detail"]
+
+
+# ── Test: Auth guards ─────────────────────────────────────────────────────────
+
+def test_analyze_unauthenticated(client, photo):
+    """POST /photos/{id}/analyze returns 401 without auth."""
+    response = client.post(f"/photos/{photo.id}/analyze")
+    assert response.status_code == 401
+
+
+def test_analyze_customer_forbidden(client, customer_headers, photo):
+    """POST /photos/{id}/analyze returns 403 for customer users."""
+    response = client.post(
+        f"/photos/{photo.id}/analyze",
+        headers=customer_headers,
+    )
+    assert response.status_code == 403
+
+
+# ── Test: JSON parsing ────────────────────────────────────────────────────────
+
+@patch("app.config.settings.ANTHROPIC_API_KEY", "***")
+@patch("app.routers.photos.storage.download_bytes")
+def test_analyze_clean_json(mock_download, client, staff_headers, photo, test_db):
+    """Analyze endpoint parses clean JSON response."""
+    # Mock photo bytes (simple 1x1 red pixel JPEG)
+    mock_download.return_value = (
+        b'\xff\xd8\xff\xe0\x00\x10JFIF\x00\x01\x01\x00\x00\x01\x00\x01\x00\x00'
+        b'\xff\xdb\x00C\x00\x08\x06\x06\x07\x06\x05\x08\x07\x07\x07\t\t\x08\n\x0c'
+        b'\xff\xc0\x00\x0b\x08\x00\x01\x00\x01\x01\x01\x11\x00\xff\xc4\x00\x14\x00'
+        b'\x01\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00'
+        b'\xff\xda\x00\x08\x01\x01\x00\x00?\x00\x7f\xff\xd9'
+    )
+
+    # Mock Anthropic response with clean JSON
+    mock_response = Mock()
+    mock_content_block = Mock()
+    mock_content_block.text = """{
+        "panes": 4,
+        "panels": 2,
+        "estimated_sqft": 12.5,
+        "pieces": 120,
+        "confidence": "high",
+        "notes": "Clear view"
+    }"""
+    mock_response.content = [mock_content_block]
+
+    # Need to patch where Anthropic is instantiated, inside the function
+    with patch("anthropic.Anthropic") as mock_anthropic:
+        mock_client = Mock()
+        mock_client.messages.create.return_value = mock_response
+        mock_anthropic.return_value = mock_client
+
+        response = client.post(
+            f"/photos/{photo.id}/analyze",
+            headers=staff_headers,
+        )
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["ai_panes"] == 4
+        assert data["ai_panels"] == 2
+        assert data["ai_sqft"] == 12.5
+        assert data["ai_pieces"] == 120
+        assert data["ai_analysis_notes"] == "Clear view"
+        assert data["ai_analyzed_at"] is not None
+
+        # Verify DB updated
+        test_db.refresh(photo)
+        assert photo.ai_panes == 4
+        assert photo.ai_panels == 2
+        assert photo.ai_sqft == 12.5
+        assert photo.ai_pieces == 120
+
+
+@patch("app.config.settings.ANTHROPIC_API_KEY", "***")
+@patch("app.routers.photos.storage.download_bytes")
+def test_analyze_json_wrapped_in_prose(mock_download, client, staff_headers, photo):
+    """Analyze endpoint extracts JSON when wrapped in prose."""
+    mock_download.return_value = (
+        b'\xff\xd8\xff\xe0\x00\x10JFIF\x00\x01\x01\x00\x00\x01\x00\x01\x00\x00'
+        b'\xff\xdb\x00C\x00\x08\x06\x06\x07\x06\x05\x08\x07\x07\x07\t\t\x08\n\x0c'
+        b'\xff\xc0\x00\x0b\x08\x00\x01\x00\x01\x01\x01\x11\x00\xff\xc4\x00\x14\x00'
+        b'\x01\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00'
+        b'\xff\xda\x00\x08\x01\x01\x00\x00?\x00\x7f\xff\xd9'
+    )
+
+    # Mock response with JSON in code fence
+    mock_response = Mock()
+    mock_content_block = Mock()
+    mock_content_block.text = """Here is the analysis:
+
+```json
+{
+    "panes": 3,
+    "panels": 1,
+    "estimated_sqft": null,
+    "pieces": 85,
+    "confidence": "medium",
+    "notes": "Partially obscured"
+}
+```
+
+This window shows moderate complexity."""
+    mock_response.content = [mock_content_block]
+
+    with patch("anthropic.Anthropic") as mock_anthropic:
+        mock_client = Mock()
+        mock_client.messages.create.return_value = mock_response
+        mock_anthropic.return_value = mock_client
+
+        response = client.post(
+            f"/photos/{photo.id}/analyze",
+            headers=staff_headers,
+        )
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["ai_panes"] == 3
+        assert data["ai_panels"] == 1
+        assert data["ai_sqft"] is None
+        assert data["ai_pieces"] == 85
+
+
+@patch("app.config.settings.ANTHROPIC_API_KEY", "***")
+@patch("app.routers.photos.storage.download_bytes")
+def test_analyze_malformed_json(mock_download, client, staff_headers, photo):
+    """Analyze endpoint returns 502 on malformed JSON."""
+    mock_download.return_value = (
+        b'\xff\xd8\xff\xe0\x00\x10JFIF\x00\x01\x01\x00\x00\x01\x00\x01\x00\x00'
+        b'\xff\xdb\x00C\x00\x08\x06\x06\x07\x06\x05\x08\x07\x07\x07\t\t\x08\n\x0c'
+        b'\xff\xc0\x00\x0b\x08\x00\x01\x00\x01\x01\x01\x11\x00\xff\xc4\x00\x14\x00'
+        b'\x01\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00'
+        b'\xff\xda\x00\x08\x01\x01\x00\x00?\x00\x7f\xff\xd9'
+    )
+
+    mock_response = Mock()
+    mock_content_block = Mock()
+    mock_content_block.text = "This is not JSON at all, sorry!"
+    mock_response.content = [mock_content_block]
+
+    with patch("anthropic.Anthropic") as mock_anthropic:
+        mock_client = Mock()
+        mock_client.messages.create.return_value = mock_response
+        mock_anthropic.return_value = mock_client
+
+        response = client.post(
+            f"/photos/{photo.id}/analyze",
+            headers=staff_headers,
+        )
+
+        assert response.status_code == 502
+        assert "invalid JSON" in response.json()["detail"]
+
+
+# ── Test: Staff edit wins ─────────────────────────────────────────────────────
+
+def test_staff_edit_overrides_ai(client, staff_headers, photo, test_db):
+    """Staff edits via PATCH take precedence over AI values."""
+    # Set initial AI values
+    photo.ai_panes = 4
+    photo.ai_pieces = 100
+    test_db.commit()
+
+    # Staff edits the values
+    response = client.patch(
+        f"/photos/{photo.id}",
+        headers=staff_headers,
+        json={"ai_panes": 6, "ai_pieces": 150},
+    )
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["ai_panes"] == 6
+    assert data["ai_pieces"] == 150
+
+
+def test_customer_cannot_edit_ai_fields(client, customer_headers, photo):
+    """Customer cannot edit AI fields via PATCH."""
+    response = client.patch(
+        f"/photos/{photo.id}",
+        headers=customer_headers,
+        json={"ai_panes": 99, "notes": "New note"},
+    )
+
+    assert response.status_code == 403
+    assert "AI analysis fields are staff-only" in response.json()["detail"]
+
+
+# ── Test: Condition sheet integration ────────────────────────────────────────
+
+def test_condition_schedule_uses_ai_data(test_db, project):
+    """Window Condition Schedule rows include AI panes/panels/pieces/sqft."""
+    from processing.condition_sheet import build_condition_schedule_rows_from_photos
+
+    # Create photos with AI data
+    photo1 = Photo(
+        id=new_uuid(),
+        project_id=project.id,
+        storage_url="/media/test/1.jpg",
+        notes="1 overall",
+        window_number="1",
+        ai_panes=4,
+        ai_panels=2,
+        ai_sqft=18.0,
+        ai_pieces=200,
+    )
+    photo2 = Photo(
+        id=new_uuid(),
+        project_id=project.id,
+        storage_url="/media/test/1a.jpg",
+        notes="1A w2 l1 b5 50pc 20x30",
+        window_number="1",
+        panel_letter="A",
+    )
+    test_db.add_all([photo1, photo2])
+    test_db.commit()
+
+    # Build photo dicts like reports.py does
+    photos_dicts = [
+        {
+            "id": photo1.id,
+            "notes": photo1.notes,
+            "window_number": photo1.window_number,
+            "panel_letter": photo1.panel_letter or "",
+            "ai_panes": photo1.ai_panes,
+            "ai_panels": photo1.ai_panels,
+            "ai_sqft": photo1.ai_sqft,
+            "ai_pieces": photo1.ai_pieces,
+        },
+        {
+            "id": photo2.id,
+            "notes": photo2.notes,
+            "window_number": photo2.window_number,
+            "panel_letter": photo2.panel_letter or "",
+            "ai_panes": None,
+            "ai_panels": None,
+            "ai_sqft": None,
+            "ai_pieces": None,
+        },
+    ]
+
+    rows = build_condition_schedule_rows_from_photos(photos_dicts, mode="shorthand")
+
+    # Find window row (is_window=True)
+    window_row = next((r for r in rows if r["is_window"]), None)
+    assert window_row is not None
+    assert window_row["id"] == "1"
+    assert window_row["panes"] == "4"
+    assert window_row["panels"] == "2"
+    assert window_row["sqft"] == "18.0"
+    assert window_row["pieces"] == "200"
+
+    # Panel row should have parsed condition data
+    panel_row = next((r for r in rows if not r["is_window"]), None)
+    assert panel_row is not None
+    assert panel_row["warp"] == "2"
+    assert panel_row["lead"] == "1"
+    assert panel_row["pieces"] == "50"
+
+
+def test_condition_schedule_fallback_to_conditiondata(test_db, project):
+    """Window Condition Schedule uses ConditionData when AI data is missing."""
+    from processing.condition_sheet import build_condition_schedule_rows_from_photos
+
+    photo = Photo(
+        id=new_uuid(),
+        project_id=project.id,
+        storage_url="/media/test/2.jpg",
+        notes="2 ov 40x60",
+        window_number="2",
+        # No AI data
+    )
+    test_db.add(photo)
+    test_db.commit()
+
+    photos_dicts = [
+        {
+            "id": photo.id,
+            "notes": photo.notes,
+            "window_number": photo.window_number,
+            "panel_letter": "",
+            "ai_panes": None,
+            "ai_panels": None,
+            "ai_sqft": None,
+            "ai_pieces": None,
+        },
+    ]
+
+    rows = build_condition_schedule_rows_from_photos(photos_dicts, mode="shorthand")
+
+    window_row = next((r for r in rows if r["is_window"]), None)
+    assert window_row is not None
+    # Should compute sqft from ov dims (40*60/144 = 16.67 rounded)
+    assert float(window_row["sqft"]) > 16
+    # No AI data, so panes/panels keys should not exist
+    assert "panes" not in window_row
+    assert "panels" not in window_row
