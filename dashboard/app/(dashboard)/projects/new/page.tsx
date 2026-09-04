@@ -63,27 +63,27 @@ export default function NewProjectPage() {
         <div>
           <label className="label">Project Name *</label>
           <input className="input" value={name} onChange={e => setName(e.target.value)}
-            placeholder="e.g. St. Mary's Catholic Church" autoFocus />
+            placeholder="e.g. St. Mary's Catholic Church" autoFocus autoComplete="organization" />
         </div>
         <div>
           <label className="label">Church / Building Name</label>
           <input className="input" value={church} onChange={e => setChurch(e.target.value)}
-            placeholder="If different from project name" />
+            placeholder="If different from project name" autoComplete="organization" />
         </div>
         <div>
           <label className="label">Street Address</label>
           <input className="input" value={street} onChange={e => setStreet(e.target.value)}
-            placeholder="123 Main St" />
+            placeholder="123 Main St" autoComplete="street-address" />
         </div>
         <div className="grid grid-cols-2 gap-3">
           <div>
             <label className="label">City</label>
-            <input className="input" value={city} onChange={e => setCity(e.target.value)} placeholder="Denver" />
+            <input className="input" value={city} onChange={e => setCity(e.target.value)} placeholder="Denver" autoComplete="address-level2" />
           </div>
           <div>
             <label className="label">State</label>
             <input className="input" value={state} onChange={e => setState(e.target.value)}
-              placeholder="CO" maxLength={2} style={{ textTransform: 'uppercase' }} />
+              placeholder="CO" maxLength={2} style={{ textTransform: 'uppercase' }} autoComplete="address-level1" />
           </div>
         </div>
         <div className="flex gap-3 pt-2">
