@@ -10,7 +10,7 @@ SECTION_KEYS = [
     "summary",
 ]
 
-DEFAULT_CONDITION_SCHEDULE_TITLE = "Appendix 4: Window Condition Schedule"
+DEFAULT_CONDITION_SCHEDULE_TITLE = "Appendix 5: Window Condition Schedule"
 DEFAULT_CONDITION_SCHEDULE_INTRO = (
     "Per-window and per-panel assessment details. Red indicates critical condition, "
     "yellow indicates moderate, green indicates good condition."
