@@ -540,21 +540,55 @@ def build_condition_schedule_rows_from_photos(photos: List[Dict], mode: str = "s
     Returns a list of row dicts matching exactly what
     report_generator.py::_append_condition_schedule_table expects: id, elev,
     cond, warp, lead, glass_breaks, wood_rot, paint_caulk, pieces, sqft, notes,
-    is_window.
+    is_window, plus optional panes, panels (from AI vision analysis).
     """
     panels = _parse_photos_to_panels(photos, mode=mode)
     windows, sorted_windows = _group_panels_by_window(panels)
+    
+    # Build photo index by window number for AI data lookup
+    photos_by_window = {}
+    for p in photos:
+        wnum = p.get("window_number", "").strip()
+        if wnum:
+            if wnum not in photos_by_window:
+                photos_by_window[wnum] = []
+            photos_by_window[wnum].append(p)
 
     def _val(value):
         if value is None:
             return ""
         return str(value)
+    
+    def _aggregate_ai_for_window(wn: str) -> Dict:
+        """Aggregate AI vision analysis from photos for a window.
+        
+        Returns dict with panes, panels, sqft, pieces (using staff-edited ai_* 
+        values first, then ConditionData shorthand-parsed values, then blank).
+        """
+        win_photos = photos_by_window.get(wn, [])
+        
+        # Collect non-null AI values
+        panes_vals = [p.get("ai_panes") for p in win_photos if p.get("ai_panes")]
+        panels_vals = [p.get("ai_panels") for p in win_photos if p.get("ai_panels")]
+        sqft_vals = [p.get("ai_sqft") for p in win_photos if p.get("ai_sqft")]
+        pieces_vals = [p.get("ai_pieces") for p in win_photos if p.get("ai_pieces")]
+        
+        # Use first available value (photos are ordered, first is typically the overall shot)
+        # or max if multiple (for sqft/pieces, max is more conservative)
+        return {
+            "panes": panes_vals[0] if panes_vals else None,
+            "panels": panels_vals[0] if panels_vals else None,
+            "sqft": max(sqft_vals) if sqft_vals else None,
+            "pieces": max(pieces_vals) if pieces_vals else None,
+        }
 
     rows: List[Dict] = []
     for wn in sorted_windows:
         win_data = windows[wn]
         overall = win_data["overall"]
         panel_rows = win_data["panels"]
+        
+        ai_data = _aggregate_ai_for_window(wn)
 
         worst_rank = 0
         rank_map = {"Poor": 3, "Fair": 2, "Good": 1}
@@ -578,8 +612,22 @@ def build_condition_schedule_rows_from_photos(photos: List[Dict], mode: str = "s
             (p.elevation for p in panel_rows if p.elevation), ""
         )
         window_cond = {3: "Poor", 2: "Fair", 1: "Good"}.get(worst_rank, "")
+        
+        # Compute sqft: AI first, then ConditionData dims, then blank
+        window_sqft = ""
+        if ai_data["sqft"]:
+            window_sqft = _val(round(ai_data["sqft"], 1))
+        else:
+            computed = _window_overall_sqft(win_data)
+            if computed:
+                window_sqft = _val(computed)
+        
+        # Compute pieces: AI first, then ConditionData sum, then blank
+        window_pieces = ""
+        if ai_data["pieces"]:
+            window_pieces = _val(ai_data["pieces"])
 
-        rows.append({
+        window_row = {
             "id": wn,
             "elev": (overall_elev or "").upper(),
             "cond": window_cond,
@@ -588,11 +636,19 @@ def build_condition_schedule_rows_from_photos(photos: List[Dict], mode: str = "s
             "glass_breaks": "",
             "wood_rot": "Yes" if has_rot else "",
             "paint_caulk": "Yes" if has_paint else "",
-            "pieces": "",
-            "sqft": _val(_window_overall_sqft(win_data)) if _window_overall_sqft(win_data) else "",
+            "pieces": window_pieces,
+            "sqft": window_sqft,
             "notes": "",
             "is_window": True,
-        })
+        }
+        
+        # Add panes/panels if AI provided them
+        if ai_data["panes"]:
+            window_row["panes"] = _val(ai_data["panes"])
+        if ai_data["panels"]:
+            window_row["panels"] = _val(ai_data["panels"])
+        
+        rows.append(window_row)
 
         for pd in panel_rows:
             cond = _panel_condition(pd) or ""

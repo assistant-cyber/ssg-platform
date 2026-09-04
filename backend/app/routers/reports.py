@@ -145,6 +145,12 @@ def _photos_to_dicts(photos, cache_dir: Path):
             "panel_letter": p.panel_letter or "",
             "elevation": p.elevation or "",
             "is_elevation": bool(getattr(p, "is_elevation", False)),
+            "dim_width": getattr(p, "dim_width", None),
+            "dim_height": getattr(p, "dim_height", None),
+            "ai_panes": getattr(p, "ai_panes", None),
+            "ai_panels": getattr(p, "ai_panels", None),
+            "ai_sqft": getattr(p, "ai_sqft", None),
+            "ai_pieces": getattr(p, "ai_pieces", None),
             "pins": [
                 {
                     "x_pct": pin.x_pct,
