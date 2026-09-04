@@ -607,10 +607,21 @@ def update_photo(
 
     if current_user.role == "customer" and current_user.linked_project_id != photo.project_id:
         raise HTTPException(status_code=403, detail="Access denied")
+    
+    # AI analysis fields are staff-only editable
+    ai_fields = {"ai_panes", "ai_panels", "ai_sqft", "ai_pieces", "ai_analysis_notes"}
+    update_data = body.model_dump(exclude_unset=True)
+    
+    if current_user.role == "customer":
+        for field in ai_fields:
+            if field in update_data:
+                raise HTTPException(
+                    status_code=403, 
+                    detail=f"AI analysis fields are staff-only editable"
+                )
 
     notes_changed = body.notes is not None and body.notes != photo.notes
 
-    update_data = body.model_dump(exclude_unset=True)
     for field, value in update_data.items():
         setattr(photo, field, value)
 
