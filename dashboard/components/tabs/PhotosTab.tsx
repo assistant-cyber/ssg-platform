@@ -658,6 +658,7 @@ export default function PhotosTab({ project, onRefresh }: Props) {
     // Check if click is within the rendered image bounds
     if (overlayX < 0 || overlayY < 0 || overlayX > imageOverlayRect.width || overlayY > imageOverlayRect.height) return;
     
+    // Clamp to 0-100% (edge clamping handled in rendering to prevent clipping)
     const x_pct = Math.min(100, Math.max(0, (overlayX / imageOverlayRect.width) * 100));
     const y_pct = Math.min(100, Math.max(0, (overlayY / imageOverlayRect.height) * 100));
 
@@ -1056,7 +1057,7 @@ export default function PhotosTab({ project, onRefresh }: Props) {
                 {modalPhoto.is_elevation && imageOverlayRect ? (
                   <div
                     data-pin-overlay
-                    className="absolute cursor-crosshair"
+                    className="absolute cursor-crosshair overflow-visible"
                     style={{
                       left: `${imageOverlayRect.left}px`,
                       top: `${imageOverlayRect.top}px`,
