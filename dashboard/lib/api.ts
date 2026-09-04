@@ -63,6 +63,12 @@ export interface Photo {
   dim_width?: number | null;
   dim_height?: number | null;
   dim_depth?: number | null;
+  ai_panes?: number | null;
+  ai_panels?: number | null;
+  ai_sqft?: number | null;
+  ai_pieces?: number | null;
+  ai_analyzed_at?: string | null;
+  ai_analysis_notes?: string | null;
   condition_data?: ConditionData | null;
   pins?: PhotoPin[];
 }
@@ -293,8 +299,12 @@ class ApiClient {
     return res.json();
   }
 
-  async updatePhoto(id: string, data: { notes?: string; is_elevation?: boolean; elevation?: string; dim_width?: number | null; dim_height?: number | null; dim_depth?: number | null }): Promise<Photo> {
+  async updatePhoto(id: string, data: { notes?: string; is_elevation?: boolean; elevation?: string; dim_width?: number | null; dim_height?: number | null; dim_depth?: number | null; ai_panes?: number | null; ai_panels?: number | null; ai_sqft?: number | null; ai_pieces?: number | null }): Promise<Photo> {
     return this.request('PATCH', `/photos/${id}`, data);
+  }
+
+  async analyzePhoto(photoId: string): Promise<Photo> {
+    return this.request('POST', `/photos/${photoId}/analyze`, undefined, { timeoutMs: 60_000 });
   }
 
   // ── Photo pins (elevation photo annotations) ────────────────────────────────
