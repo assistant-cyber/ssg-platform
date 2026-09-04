@@ -123,6 +123,13 @@ export default function WindowGroupedGallery({
                       >
                         {selectedPhotoIds.includes(photo.id) ? 'Selected' : 'Select'}
                       </button>
+                      {(photo.ai_panes != null || photo.ai_sqft != null) && (
+                        <div className="absolute bottom-2 right-2 rounded-full bg-black/70 px-2 py-0.5 text-[10px] font-medium text-white">
+                          {photo.ai_panes != null && `${photo.ai_panes} panes`}
+                          {photo.ai_panes != null && photo.ai_sqft != null && ' · '}
+                          {photo.ai_sqft != null && `${photo.ai_sqft} sqft`}
+                        </div>
+                      )}
                       <div className="absolute right-3 top-3 rounded-full bg-ssg-green p-1 text-white shadow">
                         <CheckCircle2 size={14} />
                       </div>
@@ -196,6 +203,13 @@ export default function WindowGroupedGallery({
                     >
                       {selectedPhotoIds.includes(photo.id) ? 'Selected' : 'Select'}
                     </button>
+                    {(photo.ai_panes != null || photo.ai_sqft != null) && (
+                      <div className="absolute bottom-2 right-2 rounded-full bg-black/70 px-2 py-0.5 text-[10px] font-medium text-white">
+                        {photo.ai_panes != null && `${photo.ai_panes} panes`}
+                        {photo.ai_panes != null && photo.ai_sqft != null && ' · '}
+                        {photo.ai_sqft != null && `${photo.ai_sqft} sqft`}
+                      </div>
+                    )}
                     <div className="absolute right-3 top-3 rounded-full bg-ssg-green p-1 text-white shadow">
                       <CheckCircle2 size={14} />
                     </div>
