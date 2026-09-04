@@ -42,6 +42,7 @@ export default function EstimateTab({ project, onRefresh }: Props) {
   const [saving, setSaving] = useState(false);
   const [improving, setImproving] = useState(false);
   const [loading, setLoading] = useState(!project.latest_report);
+  const [saveError, setSaveError] = useState<string | null>(null);
 
   useEffect(() => {
     setReport(project.latest_report ?? null);
@@ -57,6 +58,7 @@ export default function EstimateTab({ project, onRefresh }: Props) {
         setReport(latest);
         setDraft(emptyDraft(project, latest.narrative));
       } catch {
+        // Initial load failure is silent — createEmptyReportDraft gives a workable starting state.
         setDraft(createEmptyReportDraft(project));
       } finally {
         setLoading(false);
@@ -68,10 +70,16 @@ export default function EstimateTab({ project, onRefresh }: Props) {
   const selectedCount = selectedIds.length;
 
   const persistDraft = async (nextDraft: ReportDraft) => {
-    const saved = await api.saveReportDraft(project.id, nextDraft);
-    setReport(saved);
-    setDraft(emptyDraft(project, saved.narrative));
-    await onRefresh();
+    setSaveError(null);
+    try {
+      const saved = await api.saveReportDraft(project.id, nextDraft);
+      setReport(saved);
+      setDraft(emptyDraft(project, saved.narrative));
+      await onRefresh();
+    } catch (error) {
+      setSaveError(error instanceof Error ? error.message : 'Failed to save brief. Please try again.');
+      throw error;
+    }
   };
 
   const togglePhoto = (photoId: string) => {
@@ -126,6 +134,8 @@ export default function EstimateTab({ project, onRefresh }: Props) {
       await persistDraft(nextDraft);
       setSelectedIds([]);
       closeBriefModal();
+    } catch {
+      // Error is surfaced via saveError state set in persistDraft
     } finally {
       setSaving(false);
     }
@@ -146,9 +156,12 @@ export default function EstimateTab({ project, onRefresh }: Props) {
   const improveBrief = async () => {
     if (!briefText.trim()) return;
     setImproving(true);
+    setSaveError(null);
     try {
       const improved = await api.improveBrief(project.id, briefText);
       setBriefText(improved.text.replace(/—/g, ', '));
+    } catch (error) {
+      setSaveError(error instanceof Error ? error.message : 'Failed to improve brief. Please try again.');
     } finally {
       setImproving(false);
     }
@@ -353,6 +366,12 @@ export default function EstimateTab({ project, onRefresh }: Props) {
                   placeholder="Describe what these photos show and what work is needed."
                 />
               </div>
+
+              {saveError ? (
+                <div className="rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+                  {saveError}
+                </div>
+              ) : null}
 
               <div className="flex flex-wrap gap-3">
                 <button
