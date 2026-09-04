@@ -163,6 +163,46 @@ export default function PhotosTab({ project, onRefresh }: Props) {
 
   useEffect(() => { modalNoteRef.current = modalNote; }, [modalNote]);
 
+  const queuePlans = useMemo(
+    () => buildUploadDraftPlans(
+      queue.map((item) => ({ id: item.id, notes: item.notes, originalName: item.file.name })),
+      project.photos,
+    ),
+    [project.photos, queue],
+  );
+
+  const planMap = useMemo(() => new Map(queuePlans.map((plan) => [plan.id, plan])), [queuePlans]);
+
+  // Quick-pick dimension chips: every distinct width x height (x depth) combo
+  // already used somewhere in this project, most-used first, so staff never
+  // have to retype the same window size more than once.
+  const dimensionPresets = useMemo(() => {
+    const counts = new Map<string, { width: number; height: number; depth: number | null; count: number }>();
+    for (const photo of project.photos) {
+      if (photo.dim_width == null || photo.dim_height == null) continue;
+      const key = `${photo.dim_width}x${photo.dim_height}x${photo.dim_depth ?? ''}`;
+      const existing = counts.get(key);
+      if (existing) {
+        existing.count += 1;
+      } else {
+        counts.set(key, { width: photo.dim_width, height: photo.dim_height, depth: photo.dim_depth ?? null, count: 1 });
+      }
+    }
+    return Array.from(counts.values()).sort((a, b) => b.count - a.count).slice(0, 8);
+  }, [project.photos]);
+
+  const uploadInFlight = queue.some((item) => item.status === 'uploading');
+  const queuedCount = queue.filter((item) => item.status === 'queued').length;
+  const selectedCount = selectedPhotoIds.length;
+  const allSelected = project.photos.length > 0 && selectedCount === project.photos.length;
+  const modalPhoto = modalPhotoIndex === null ? null : project.photos[modalPhotoIndex] ?? null;
+
+  useEffect(() => { queueRef.current = queue; }, [queue]);
+
+  useEffect(() => () => { queueRef.current.forEach((item) => URL.revokeObjectURL(item.previewUrl)); }, []);
+  useEffect(() => () => { recognitionRef.current?.stop(); }, []);
+  useEffect(() => () => { modalRecognitionRef.current?.stop(); }, []);
+
   // Compute rendered image rectangle (accounting for object-contain letterboxing)
   // and update on image load, window resize, or modalPhoto change
   useEffect(() => {
@@ -221,46 +261,6 @@ export default function PhotosTab({ project, onRefresh }: Props) {
       resizeObserver.disconnect();
     };
   }, [modalPhoto]);
-
-  const queuePlans = useMemo(
-    () => buildUploadDraftPlans(
-      queue.map((item) => ({ id: item.id, notes: item.notes, originalName: item.file.name })),
-      project.photos,
-    ),
-    [project.photos, queue],
-  );
-
-  const planMap = useMemo(() => new Map(queuePlans.map((plan) => [plan.id, plan])), [queuePlans]);
-
-  // Quick-pick dimension chips: every distinct width x height (x depth) combo
-  // already used somewhere in this project, most-used first, so staff never
-  // have to retype the same window size more than once.
-  const dimensionPresets = useMemo(() => {
-    const counts = new Map<string, { width: number; height: number; depth: number | null; count: number }>();
-    for (const photo of project.photos) {
-      if (photo.dim_width == null || photo.dim_height == null) continue;
-      const key = `${photo.dim_width}x${photo.dim_height}x${photo.dim_depth ?? ''}`;
-      const existing = counts.get(key);
-      if (existing) {
-        existing.count += 1;
-      } else {
-        counts.set(key, { width: photo.dim_width, height: photo.dim_height, depth: photo.dim_depth ?? null, count: 1 });
-      }
-    }
-    return Array.from(counts.values()).sort((a, b) => b.count - a.count).slice(0, 8);
-  }, [project.photos]);
-
-  const uploadInFlight = queue.some((item) => item.status === 'uploading');
-  const queuedCount = queue.filter((item) => item.status === 'queued').length;
-  const selectedCount = selectedPhotoIds.length;
-  const allSelected = project.photos.length > 0 && selectedCount === project.photos.length;
-  const modalPhoto = modalPhotoIndex === null ? null : project.photos[modalPhotoIndex] ?? null;
-
-  useEffect(() => { queueRef.current = queue; }, [queue]);
-
-  useEffect(() => () => { queueRef.current.forEach((item) => URL.revokeObjectURL(item.previewUrl)); }, []);
-  useEffect(() => () => { recognitionRef.current?.stop(); }, []);
-  useEffect(() => () => { modalRecognitionRef.current?.stop(); }, []);
 
   // Concurrent upload runner
   useEffect(() => {
