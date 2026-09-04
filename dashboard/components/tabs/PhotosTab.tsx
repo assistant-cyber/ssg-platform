@@ -161,6 +161,7 @@ export default function PhotosTab({ project, onRefresh }: Props) {
   const [analyzingPhoto, setAnalyzingPhoto] = useState(false);
   const [analyzeError, setAnalyzeError] = useState<string | null>(null);
   const [savingAiFields, setSavingAiFields] = useState(false);
+  const [modalSaveError, setModalSaveError] = useState<string | null>(null);
 
   const libraryInputRef = useRef<HTMLInputElement | null>(null);
   const cameraInputRef = useRef<HTMLInputElement | null>(null);
@@ -515,11 +516,12 @@ export default function PhotosTab({ project, onRefresh }: Props) {
   const persistModalNote = async (photo: Photo, note: string) => {
     if (note === (photo.notes ?? '')) return;
     setSavingNote(true);
+    setModalSaveError(null);
     try {
       await api.updatePhoto(photo.id, { notes: note.trim() });
       await onRefresh();
-    } catch {
-      // best-effort auto-save, don't alert
+    } catch (error) {
+      setModalSaveError(error instanceof Error ? error.message : 'Failed to save note. Please try again.');
     } finally {
       setSavingNote(false);
     }
@@ -576,9 +578,12 @@ export default function PhotosTab({ project, onRefresh }: Props) {
   const toggleElevationPhoto = async () => {
     if (!modalPhoto || savingElevation) return;
     setSavingElevation(true);
+    setModalSaveError(null);
     try {
       await api.updatePhoto(modalPhoto.id, { is_elevation: !modalPhoto.is_elevation });
       await onRefresh();
+    } catch (error) {
+      setModalSaveError(error instanceof Error ? error.message : 'Failed to update elevation status. Please try again.');
     } finally {
       setSavingElevation(false);
     }
@@ -587,9 +592,12 @@ export default function PhotosTab({ project, onRefresh }: Props) {
   const setElevationSide = async (side: string) => {
     if (!modalPhoto) return;
     setSavingElevation(true);
+    setModalSaveError(null);
     try {
       await api.updatePhoto(modalPhoto.id, { elevation: side });
       await onRefresh();
+    } catch (error) {
+      setModalSaveError(error instanceof Error ? error.message : 'Failed to save elevation side. Please try again.');
     } finally {
       setSavingElevation(false);
     }
@@ -607,6 +615,7 @@ export default function PhotosTab({ project, onRefresh }: Props) {
   const commitDimensions = async (widthRaw = dimWidth, heightRaw = dimHeight, depthRaw = dimDepth) => {
     if (!modalPhoto || savingDimensions) return;
     setSavingDimensions(true);
+    setModalSaveError(null);
     try {
       await api.updatePhoto(modalPhoto.id, {
         dim_width: parseDim(widthRaw),
@@ -614,6 +623,8 @@ export default function PhotosTab({ project, onRefresh }: Props) {
         dim_depth: parseDim(depthRaw),
       });
       await onRefresh();
+    } catch (error) {
+      setModalSaveError(error instanceof Error ? error.message : 'Failed to save dimensions. Please try again.');
     } finally {
       setSavingDimensions(false);
     }
@@ -667,6 +678,7 @@ export default function PhotosTab({ project, onRefresh }: Props) {
   const commitAiFields = async () => {
     if (!modalPhoto || savingAiFields) return;
     setSavingAiFields(true);
+    setModalSaveError(null);
     try {
       await api.updatePhoto(modalPhoto.id, {
         ai_panes: parseAiInt(aiPanes),
@@ -675,8 +687,8 @@ export default function PhotosTab({ project, onRefresh }: Props) {
         ai_pieces: parseAiInt(aiPieces),
       });
       await onRefresh();
-    } catch {
-      // Best-effort blur save
+    } catch (error) {
+      setModalSaveError(error instanceof Error ? error.message : 'Failed to save AI fields. Please try again.');
     } finally {
       setSavingAiFields(false);
     }
@@ -755,6 +767,7 @@ export default function PhotosTab({ project, onRefresh }: Props) {
       setLastPinId(saved.id);  // Track for undo
       onRefresh();
     } catch {
+      // Optimistic pin create failed — revert the local-only optimistic pin from state.
       setPins((current) => current.filter((pin) => pin.id !== optimisticId));
     }
   };
@@ -1184,6 +1197,12 @@ export default function PhotosTab({ project, onRefresh }: Props) {
                   {modalPhoto.elevation ? <p><strong>Elevation:</strong> {modalPhoto.elevation}</p> : null}
                   <p><strong>Project:</strong> {project.name}</p>
                 </div>
+
+                {modalSaveError ? (
+                  <div className="rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+                    {modalSaveError}
+                  </div>
+                ) : null}
 
                 <div className="rounded-2xl border border-black/10 p-4">
                   <label className="flex items-center justify-between gap-3">
