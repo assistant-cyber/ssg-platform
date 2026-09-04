@@ -84,12 +84,24 @@ async function proxy(request: NextRequest, path: string[]) {
   }
   headers.set('user-agent', 'ssg-dashboard-proxy');
 
+  // For multipart uploads (photo uploads), stream the request body directly
+  // rather than buffering it. Vercel serverless functions have a ~4.5MB body
+  // limit on buffered requests — buffering a photo kills it. Streaming bypasses
+  // that limit. For all other methods, buffer as before (safe for JSON payloads).
+  const contentType = request.headers.get('content-type') ?? '';
+  const isMultipart = contentType.startsWith('multipart/form-data');
+
   const init: RequestInit = {
     method: request.method,
     headers,
     redirect: 'manual',
     cache: 'no-store',
-    body: ['GET', 'HEAD'].includes(request.method) ? undefined : await request.arrayBuffer(),
+    body: ['GET', 'HEAD'].includes(request.method)
+      ? undefined
+      : isMultipart
+        ? request.body   // stream directly — avoids the 4.5MB buffer limit
+        : await request.arrayBuffer(),
+    ...(isMultipart ? { duplex: 'half' } : {}),
   };
 
   const upstreamUrl = buildUpstreamUrl(path, request.nextUrl.search);
