@@ -136,6 +136,7 @@ export default function PhotosTab({ project, onRefresh }: Props) {
   const [modalNote, setModalNote] = useState('');
   const [savingNote, setSavingNote] = useState(false);
   const [deletingPhoto, setDeletingPhoto] = useState(false);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
   const [queuedPreviewId, setQueuedPreviewId] = useState<string | null>(null);
   const [selectedPhotoIds, setSelectedPhotoIds] = useState<string[]>([]);
   const [downloadingArchive, setDownloadingArchive] = useState<'all' | 'selected' | null>(null);
@@ -919,6 +920,7 @@ export default function PhotosTab({ project, onRefresh }: Props) {
   const deleteModalPhoto = async () => {
     if (!modalPhoto || !confirm('Delete this photo?')) return;
     setDeletingPhoto(true);
+    setDeleteError(null);
     try {
       await api.deletePhoto(modalPhoto.id);
       await onRefresh();
@@ -927,6 +929,8 @@ export default function PhotosTab({ project, onRefresh }: Props) {
         if (project.photos.length <= 1) return null;
         return Math.max(0, Math.min(current, project.photos.length - 2));
       });
+    } catch (error) {
+      setDeleteError(error instanceof Error ? error.message : 'Delete failed. Please try again.');
     } finally {
       setDeletingPhoto(false);
     }
@@ -1428,6 +1432,12 @@ export default function PhotosTab({ project, onRefresh }: Props) {
                   />
                   {savingNote ? <p className="mt-1 text-xs text-ssg-muted">Saving…</p> : null}
                 </div>
+
+                {deleteError ? (
+                  <div className="mt-3 rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+                    {deleteError}
+                  </div>
+                ) : null}
 
                 <div className="flex flex-wrap gap-3">
                   <button type="button" onClick={() => void downloadSinglePhoto(modalPhoto)} className="btn-secondary">
