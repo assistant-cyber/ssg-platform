@@ -15,6 +15,7 @@ export default function CustomerPortalTab({ project, onRefresh }: Props) {
   const [draft, setDraft] = useState<ReportDraft>(() => reportDraftFromNarrative(project.latest_report?.narrative, project));
   const [loading, setLoading] = useState(!project.latest_report);
   const [saving, setSaving] = useState(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
   
   // Phase 5: Proposal state
   const [showProposalEditor, setShowProposalEditor] = useState(false);
@@ -37,7 +38,7 @@ export default function CustomerPortalTab({ project, onRefresh }: Props) {
         setReport(latest);
         setDraft(reportDraftFromNarrative(latest.narrative, project));
       } catch {
-        // no published report yet
+        // Initial load failure is silent — no published report yet is a valid state.
       } finally {
         setLoading(false);
       }
@@ -49,6 +50,7 @@ export default function CustomerPortalTab({ project, onRefresh }: Props) {
   const savePublishState = async (portalPublishedAt: string | null) => {
     if (!report) return;
     setSaving(true);
+    setSaveError(null);
     try {
       const nextNarrative = {
         ...(report.narrative ?? {}),
@@ -62,6 +64,8 @@ export default function CustomerPortalTab({ project, onRefresh }: Props) {
       setReport(saved);
       setDraft(reportDraftFromNarrative(saved.narrative, project));
       await onRefresh();
+    } catch (error) {
+      setSaveError(error instanceof Error ? error.message : 'Failed to update publish state. Please try again.');
     } finally {
       setSaving(false);
     }
@@ -85,9 +89,12 @@ export default function CustomerPortalTab({ project, onRefresh }: Props) {
   const saveProposalDraft = async () => {
     if (!proposalDraft) return;
     setSaving(true);
+    setSaveError(null);
     try {
       const updated = await api.updateProposalDraft(project.id, proposalDraft);
       setProposalDraft(updated);
+    } catch (error) {
+      setSaveError(error instanceof Error ? error.message : 'Failed to save proposal draft. Please try again.');
     } finally {
       setSaving(false);
     }
@@ -97,10 +104,13 @@ export default function CustomerPortalTab({ project, onRefresh }: Props) {
   const generateProposal = async () => {
     if (!window.confirm('Generate final PDF from this draft? This will publish to the portal.')) return;
     setSaving(true);
+    setSaveError(null);
     try {
       await api.generateProposal(project.id);
       await onRefresh();
       setShowProposalEditor(false);
+    } catch (error) {
+      setSaveError(error instanceof Error ? error.message : 'Failed to generate proposal. Please try again.');
     } finally {
       setSaving(false);
     }
@@ -117,6 +127,12 @@ export default function CustomerPortalTab({ project, onRefresh }: Props) {
 
   return (
     <div className="max-w-4xl space-y-5">
+      {saveError ? (
+        <div className="rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+          {saveError}
+        </div>
+      ) : null}
+
       {/* Phase 5: Proposal Editor UI */}
       {showProposalEditor && proposalDraft ? (
         <ProposalEditor
