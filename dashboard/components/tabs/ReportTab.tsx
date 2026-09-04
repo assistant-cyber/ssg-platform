@@ -692,6 +692,7 @@ export default function ReportTab({ project, onRefresh }: Props) {
                         <td className="px-2 py-2">
                           <input
                             className="input h-10 min-w-16"
+                            inputMode="numeric"
                             value={row.pieces}
                             onChange={(event) => updateConditionScheduleRow(index, 'pieces', event.target.value)}
                           />
@@ -699,6 +700,7 @@ export default function ReportTab({ project, onRefresh }: Props) {
                         <td className="px-2 py-2">
                           <input
                             className="input h-10 min-w-16"
+                            inputMode="decimal"
                             value={row.sqft}
                             onChange={(event) => updateConditionScheduleRow(index, 'sqft', event.target.value)}
                           />
