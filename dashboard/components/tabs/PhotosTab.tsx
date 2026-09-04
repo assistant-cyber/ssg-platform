@@ -1328,13 +1328,13 @@ export default function PhotosTab({ project, onRefresh }: Props) {
 
                 {!modalPhoto.is_elevation ? (
                   <div className="rounded-2xl border border-black/10 p-4">
-                    <div className="mb-3 flex items-center justify-between gap-3">
+                    <div className="mb-3 flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
                       <label className="label">Window Analysis</label>
                       <button
                         type="button"
                         onClick={() => void analyzePhotoWithAi()}
                         disabled={analyzingPhoto}
-                        className="inline-flex min-h-[44px] items-center gap-2 rounded-xl bg-ssg-green px-4 py-2 text-sm font-medium text-white transition hover:bg-ssg-green/90 disabled:opacity-50 md:min-h-0 md:py-1.5"
+                        className="inline-flex min-h-[44px] w-full items-center justify-center gap-2 rounded-xl bg-ssg-green px-4 py-2 text-sm font-medium text-white transition hover:bg-ssg-green/90 disabled:opacity-50 md:w-auto md:min-h-0 md:py-1.5"
                       >
                         {analyzingPhoto ? <Loader2 size={14} className="animate-spin" /> : <Sparkles size={14} />}
                         {analyzingPhoto ? 'Analyzing…' : 'Analyze with AI'}
