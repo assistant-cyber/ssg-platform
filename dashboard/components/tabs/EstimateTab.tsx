@@ -132,6 +132,7 @@ export default function EstimateTab({ project, onRefresh }: Props) {
   };
 
   const removeBrief = async (briefId: string) => {
+    if (!confirm('Remove this brief? This cannot be undone.')) return;
     const nextDraft: ReportDraft = {
       ...draft,
       _meta: {
