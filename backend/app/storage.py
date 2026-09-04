@@ -33,7 +33,16 @@ class StorageService:
             }
             if settings.S3_ENDPOINT_URL:
                 client_kwargs["endpoint_url"] = settings.S3_ENDPOINT_URL
-                client_kwargs["config"] = Config(s3={"addressing_style": "path"})
+                # request/response_checksum: newer boto3 (>=1.36) sends CRC32
+                # checksum + trailer headers by default, which S3-compatible
+                # providers (Supabase Storage) reject with an empty-code
+                # ClientError on PutObject. Only send checksums when the
+                # operation requires them.
+                client_kwargs["config"] = Config(
+                    s3={"addressing_style": "path"},
+                    request_checksum_calculation="when_required",
+                    response_checksum_validation="when_required",
+                )
 
             self._s3 = boto3.client(**client_kwargs)
         else:
