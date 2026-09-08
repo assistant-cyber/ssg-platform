@@ -163,6 +163,22 @@ export interface Proposal {
   status: string;
 }
 
+export interface ProgressUpdatePhoto {
+  id: string;
+  storage_url: string;
+  thumbnail_url: string | null;
+  sort_order: number;
+}
+
+export interface ProgressUpdate {
+  id: string;
+  project_id: string;
+  note: string | null;
+  posted_by_id: string | null;
+  created_at: string;
+  photos: ProgressUpdatePhoto[];
+}
+
 // ── Client class ──────────────────────────────────────────────────────────────
 
 class ApiClient {
@@ -447,6 +463,42 @@ class ApiClient {
 
   async getProposal(projectId: string): Promise<Proposal> {
     return this.request('GET', `/projects/${projectId}/proposal`);
+  }
+
+  // ── Progress updates ──────────────────────────────────────────────────────
+  async listProgressUpdates(projectId: string): Promise<ProgressUpdate[]> {
+    return this.request('GET', `/projects/${projectId}/progress-updates`);
+  }
+
+  async createProgressUpdate(
+    projectId: string,
+    note: string,
+    files: File[] = [],
+  ): Promise<ProgressUpdate> {
+    const formData = new FormData();
+    formData.append('note', note);
+    for (const file of files) {
+      formData.append('files', file);
+    }
+
+    const token = this.getToken();
+    const res = await fetch(`${BASE}/projects/${projectId}/progress-updates`, {
+      method: 'POST',
+      headers: token ? { Authorization: `Bearer ${token}` } : undefined,
+      body: formData,
+    });
+
+    if (!res.ok) {
+      let detail = `HTTP ${res.status}`;
+      try { const e = await res.json(); detail = e.detail ?? detail; } catch {}
+      throw new Error(detail);
+    }
+
+    return res.json();
+  }
+
+  async deleteProgressUpdate(updateId: string): Promise<void> {
+    return this.request('DELETE', `/progress-updates/${updateId}`);
   }
 
   // ── Helpers ───────────────────────────────────────────────────────────────

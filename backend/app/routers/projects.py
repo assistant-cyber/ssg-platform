@@ -16,6 +16,7 @@ from app.models import (
     EstimateLineItem,
     Photo,
     PhotoPin,
+    ProgressUpdate,
     Project,
     Proposal,
     Report,
@@ -254,6 +255,14 @@ def delete_project(
     db.query(Proposal).filter(Proposal.project_id == project_id).delete(
         synchronize_session=False
     )
+    # ProgressUpdatePhoto rows cascade via SQLAlchemy relationship when their
+    # parent ProgressUpdate is deleted through the ORM (not a bulk .delete()),
+    # so use a plain query+delete loop here instead of .delete(synchronize_session=False).
+    progress_updates = db.query(ProgressUpdate).filter(
+        ProgressUpdate.project_id == project_id
+    ).all()
+    for update in progress_updates:
+        db.delete(update)
     db.query(Report).filter(Report.project_id == project_id).delete(
         synchronize_session=False
     )

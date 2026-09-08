@@ -22,6 +22,7 @@ import api, {
   portalApi,
   type Estimate,
   type Photo,
+  type ProgressUpdate,
   type ProjectDetail,
   type Proposal,
   type Report,
@@ -37,6 +38,7 @@ function statusLabel(status: string) {
     report_generated: 'Report published',
     estimate_sent: 'Estimate ready',
     accepted: 'Project approved',
+    in_progress: 'Restoration in progress',
     declined: 'Estimate declined',
   }[status] ?? status;
 }
@@ -160,6 +162,7 @@ function CustomerPortalPageContent() {
   const [estimate, setEstimate] = useState<Estimate | null>(null);
   const [report, setReport] = useState<Report | null>(null);
   const [proposal, setProposal] = useState<Proposal | null>(null);
+  const [progressUpdates, setProgressUpdates] = useState<ProgressUpdate[]>([]);
   const [error, setError] = useState('');
 
   const [responding, setResponding] = useState<'accept' | 'decline' | null>(null);
@@ -215,6 +218,11 @@ function CustomerPortalPageContent() {
         try {
           const loadedProposal = await portalApi.getProposal(projectId);
           setProposal(loadedProposal);
+        } catch {}
+
+        try {
+          const loadedUpdates = await portalApi.listProgressUpdates(projectId);
+          setProgressUpdates(loadedUpdates);
         } catch {}
 
         setStage('ready');
@@ -434,6 +442,55 @@ function CustomerPortalPageContent() {
               </div>
             )}
           </SectionCard>
+
+          {progressUpdates.length > 0 ? (
+            <SectionCard eyebrow="Restoration Timeline" title="Project Updates">
+              <div className="space-y-4">
+                {progressUpdates.map((update) => (
+                  <div
+                    key={update.id}
+                    className="rounded-[24px] border border-black/5 bg-[#f7f6f2] p-5"
+                  >
+                    <p className="text-sm font-medium text-ssg-slate">
+                      {new Date(update.created_at).toLocaleString('en-US', {
+                        month: 'short',
+                        day: 'numeric',
+                        year: 'numeric',
+                        hour: 'numeric',
+                        minute: '2-digit',
+                      })}
+                    </p>
+                    {update.note ? (
+                      <p className="mt-3 whitespace-pre-wrap text-[15px] leading-7 text-ssg-charcoal">
+                        {update.note}
+                      </p>
+                    ) : null}
+                    {update.photos.length > 0 ? (
+                      <div className="mt-4 grid grid-cols-3 gap-3 md:grid-cols-4">
+                        {update.photos.map((photo) => (
+                          <button
+                            key={photo.id}
+                            type="button"
+                            onClick={() => {
+                              setModalSrc(api.mediaUrl(photo.storage_url));
+                              setModalCaption('');
+                            }}
+                            className="aspect-square overflow-hidden rounded-2xl border border-black/5 bg-white"
+                          >
+                            <img
+                              src={api.mediaUrl(photo.thumbnail_url || photo.storage_url)}
+                              alt=""
+                              className="h-full w-full object-cover"
+                            />
+                          </button>
+                        ))}
+                      </div>
+                    ) : null}
+                  </div>
+                ))}
+              </div>
+            </SectionCard>
+          ) : null}
 
           <SectionCard eyebrow="Field Documentation" title={`Project Photos (${project.photos.length})`}>
             {project.photos.length === 0 ? (

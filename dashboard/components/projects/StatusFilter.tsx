@@ -3,6 +3,7 @@ const OPTIONS = [
   { value: 'active',             label: 'Assessment' },
   { value: 'assessment_complete',label: 'Assessment Done' },
   { value: 'accepted',           label: 'Accepted' },
+  { value: 'in_progress',        label: 'In Progress' },
   { value: 'report_generated',   label: 'Report Ready' },
   { value: 'estimate_sent',      label: 'Estimate Sent' },
   { value: 'declined',           label: 'Declined' },

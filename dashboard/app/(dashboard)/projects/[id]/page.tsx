@@ -1,7 +1,7 @@
 'use client';
 import { Suspense, useEffect, useState } from 'react';
 import { useParams, useRouter } from 'next/navigation';
-import { AlertTriangle, ArrowLeft, Camera, DollarSign, FileSpreadsheet, Trash2, Users, X } from 'lucide-react';
+import { AlertTriangle, ArrowLeft, Camera, Clock, DollarSign, FileSpreadsheet, Trash2, Users, X } from 'lucide-react';
 import api, { type ProjectDetail } from '@/lib/api';
 import { clearAuth } from '@/lib/auth';
 import Badge from '@/components/ui/Badge';
@@ -9,12 +9,14 @@ import PhotosTab from '@/components/tabs/PhotosTab';
 import ReportTab from '@/components/tabs/ReportTab';
 import EstimateTab from '@/components/tabs/EstimateTab';
 import CustomerPortalTab from '@/components/tabs/CustomerPortalTab';
+import ProgressTab from '@/components/tabs/ProgressTab';
 import BrandWordmark from '@/components/layout/BrandWordmark';
 
 const TABS = [
   { id: 'photos',   label: 'Photos & Notes',    icon: Camera },
   { id: 'estimate', label: 'Estimate',          icon: DollarSign },
   { id: 'report',   label: 'Generate Report',   icon: FileSpreadsheet },
+  { id: 'progress', label: 'Project Updates',   icon: Clock },
   { id: 'portal',   label: 'Customer Portal',   icon: Users },
 ] as const;
 
@@ -232,6 +234,9 @@ function ProjectDetailPageContent() {
         )}
         {activeTab === 'report' && (
           <ReportTab project={project} onRefresh={reload} />
+        )}
+        {activeTab === 'progress' && (
+          <ProgressTab project={project} onRefresh={reload} />
         )}
         {activeTab === 'portal' && (
           <CustomerPortalTab project={project} onRefresh={reload} />

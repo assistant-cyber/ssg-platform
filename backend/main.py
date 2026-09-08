@@ -10,7 +10,7 @@ from fastapi.staticfiles import StaticFiles
 
 from app.config import settings
 from app.database import create_tables
-from app.routers import auth, estimates, photos, projects, reports, windows
+from app.routers import auth, estimates, photos, progress_updates, projects, reports, windows
 from app.storage import storage
 
 
@@ -73,6 +73,7 @@ app.include_router(windows.router)
 app.include_router(photos.router)
 app.include_router(estimates.router)
 app.include_router(reports.router)
+app.include_router(progress_updates.router)
 
 
 # ─── Health check ─────────────────────────────────────────────────────────────

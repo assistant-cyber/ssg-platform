@@ -87,6 +87,9 @@ class Project(Base):
     estimates = relationship("Estimate", back_populates="project", order_by="Estimate.created_at.desc()")
     reports = relationship("Report", back_populates="project", order_by="Report.generated_at.desc()")
     proposals = relationship("Proposal", back_populates="project", order_by="Proposal.generated_at.desc()")
+    progress_updates = relationship(
+        "ProgressUpdate", back_populates="project", order_by="ProgressUpdate.created_at.desc()"
+    )
 
 
 # ─── Window ───────────────────────────────────────────────────────────────────
@@ -329,3 +332,51 @@ class Proposal(Base):
     # Relationships
     project = relationship("Project", back_populates="proposals")
     estimate = relationship("Estimate", back_populates="proposals")
+
+
+# ─── ProgressUpdate ─────────────────────────────────────────────────────────────
+
+class ProgressUpdate(Base):
+    """A staff-posted 'in progress' update shown to the customer in the portal.
+
+    Distinct from the assessment Photo gallery: these are dated posts (a note
+    plus optional photos) that let staff narrate ongoing restoration work
+    after a project moves past acceptance - e.g. "Removed window 3 for
+    releading" with a few in-shop photos attached. Customers only ever see
+    updates through the portal timeline; they cannot create or edit these.
+    """
+    __tablename__ = "progress_updates"
+
+    id = Column(String, primary_key=True, default=new_uuid)
+    project_id = Column(String, ForeignKey("projects.id"), nullable=False)
+    note = Column(Text, nullable=True)
+    posted_by_id = Column(String, ForeignKey("users.id"), nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+
+    # Relationships
+    project = relationship("Project", back_populates="progress_updates")
+    posted_by = relationship("User", foreign_keys=[posted_by_id])
+    photos = relationship(
+        "ProgressUpdatePhoto", back_populates="progress_update",
+        cascade="all, delete-orphan", order_by="ProgressUpdatePhoto.sort_order",
+    )
+
+
+class ProgressUpdatePhoto(Base):
+    """A single photo attached to a ProgressUpdate.
+
+    Kept as its own lightweight table (rather than reusing Photo) since these
+    photos don't participate in window/panel lettering, AI vision analysis,
+    or condition scoring - they're purely illustrative shots for a dated
+    customer-facing update.
+    """
+    __tablename__ = "progress_update_photos"
+
+    id = Column(String, primary_key=True, default=new_uuid)
+    progress_update_id = Column(String, ForeignKey("progress_updates.id"), nullable=False)
+    storage_url = Column(String, nullable=False)
+    thumbnail_url = Column(String, nullable=True)
+    sort_order = Column(Integer, default=0, nullable=False)
+
+    # Relationships
+    progress_update = relationship("ProgressUpdate", back_populates="photos")

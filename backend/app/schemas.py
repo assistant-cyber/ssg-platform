@@ -393,6 +393,32 @@ class ProposalOut(BaseModel):
     proposal_draft: Optional[dict] = None
 
 
+# ─── ProgressUpdate ─────────────────────────────────────────────────────────────
+
+class ProgressUpdatePhotoOut(BaseModel):
+    model_config = {"from_attributes": True}
+
+    id: str
+    storage_url: str
+    thumbnail_url: Optional[str] = None
+    sort_order: int
+
+
+class ProgressUpdateCreate(BaseModel):
+    note: Optional[str] = None
+
+
+class ProgressUpdateOut(BaseModel):
+    model_config = {"from_attributes": True}
+
+    id: str
+    project_id: str
+    note: Optional[str] = None
+    posted_by_id: Optional[str] = None
+    created_at: datetime
+    photos: List[ProgressUpdatePhotoOut] = []
+
+
 # ─── Forward references ───────────────────────────────────────────────────────
 
 ProjectDetail.model_rebuild()
