@@ -132,6 +132,26 @@ def _ensure_additive_columns() -> None:
                     # these represent "not yet analyzed" as NULL, not False.
                     conn.execute(text(f"ALTER TABLE photos ADD COLUMN {column_name} {bool_type}"))
 
+    # proposals.status / proposals.proposal_draft - Phase 5 columns that were
+    # added to the Proposal model but never given an additive-migration entry,
+    # so existing production databases never got them. This broke every
+    # lazy-load of Project.proposals (including the DELETE /projects/{id}
+    # cascade, which touches proposals via ORM relationship cleanup) with
+    # "column proposals.proposal_draft does not exist".
+    if "proposals" in inspector.get_table_names():
+        proposal_columns = {col["name"] for col in inspector.get_columns("proposals")}
+
+        if "status" not in proposal_columns:
+            with engine.begin() as conn:
+                conn.execute(text(
+                    "ALTER TABLE proposals ADD COLUMN status VARCHAR NOT NULL DEFAULT 'pending'"
+                ))
+
+        if "proposal_draft" not in proposal_columns:
+            json_type = "JSON" if not is_sqlite else "JSON"
+            with engine.begin() as conn:
+                conn.execute(text(f"ALTER TABLE proposals ADD COLUMN proposal_draft {json_type}"))
+
 
 def create_tables() -> None:
     """Import all models so their metadata is registered, then create tables."""
