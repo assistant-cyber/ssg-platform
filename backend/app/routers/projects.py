@@ -20,6 +20,7 @@ from app.models import (
     Proposal,
     Report,
     User,
+    Window,
     new_uuid,
 )
 from app.schemas import ProjectCreate, ProjectDetail, ProjectOut, ProjectUpdate
@@ -237,6 +238,17 @@ def delete_project(
         synchronize_session=False
     )
     db.query(Photo).filter(Photo.project_id == project_id).delete(
+        synchronize_session=False
+    )
+    # Windows must be deleted after their photos (photos.window_id references
+    # windows.id) but before the project itself. Without this, SQLAlchemy's
+    # unit-of-work sees the in-memory Window objects lost their now-deleted
+    # `photos` children and tries to UPDATE windows.project_id = NULL during
+    # flush instead of deleting the row - which fails, since project_id is
+    # NOT NULL. This previously made every delete of a project with any
+    # windows raise a 500 (IntegrityError: null value in column "project_id"
+    # of relation "windows" violates not-null constraint).
+    db.query(Window).filter(Window.project_id == project_id).delete(
         synchronize_session=False
     )
     db.query(Proposal).filter(Proposal.project_id == project_id).delete(
