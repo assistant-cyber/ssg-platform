@@ -977,7 +977,6 @@ def analyze_photo_with_ai(
         response = client.messages.create(
             model="claude-sonnet-4-5",
             max_tokens=800,
-            temperature=0.0,
             messages=[{
                 "role": "user",
                 "content": [

@@ -409,7 +409,6 @@ Additional user context:
         response = client.messages.create(
             model="claude-haiku-4-5-20251001",
             max_tokens=2400,
-            temperature=0.4,
             messages=[{"role": "user", "content": prompt}],
         )
 
@@ -493,7 +492,6 @@ def _polish_brief_with_ai(text: str) -> str:
         response = client.messages.create(
             model="claude-haiku-4-5-20251001",
             max_tokens=220,
-            temperature=0.2,
             messages=[{"role": "user", "content": prompt}],
         )
         parts = []
