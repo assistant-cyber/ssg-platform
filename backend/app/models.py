@@ -161,6 +161,16 @@ class Photo(Base):
     ai_pieces = Column(Integer, nullable=True)       # estimated glass piece count
     ai_analyzed_at = Column(DateTime, nullable=True) # timestamp of last AI analysis
     ai_analysis_notes = Column(Text, nullable=True)  # short caveats (e.g. 'partially obscured')
+    # AI-estimated condition assessment (staff-editable, populated via the same
+    # /photos/{id}/analyze call as ai_panes/etc above). These exist so the
+    # report's "Overview and Valuation" Condition Breakdown / Frame Work
+    # tables can populate from AI vision analysis alone, for photos that were
+    # never given compact shorthand notes (e.g. "1A w2 l1 b0 rot p").
+    ai_warping = Column(Integer, nullable=True)       # 0-5 severity, mirrors ConditionData.warping
+    ai_lead_det = Column(Integer, nullable=True)      # 0-5 severity, mirrors ConditionData.lead_det
+    ai_breaks = Column(Integer, nullable=True)        # count of visibly broken/cracked panes
+    ai_wood_rot = Column(Boolean, nullable=True)      # visible wood/frame rot or damage
+    ai_paint_fail = Column(Boolean, nullable=True)    # visible paint/caulk failure
 
     # Relationships
     project = relationship("Project", back_populates="photos")

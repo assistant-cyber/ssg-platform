@@ -329,9 +329,18 @@ def _archive_response(photos: list[Photo], archive_filename: str, folder_name: s
     
     # Generate filenames for windowed photos
     photo_id_to_filename: dict[str, str] = {}
+    photo_id_to_window_number: dict[str, int] = {}
     filenames_list = generate_filenames_for_photos(windows_data)
     for photo_id, filename in filenames_list:
         photo_id_to_filename[photo_id] = filename
+    for window in windows_data:
+        window_number = window.get('number')
+        if window_number is None:
+            continue
+        for photo_dict in window.get('photos', []):
+            pid = photo_dict.get('id')
+            if pid:
+                photo_id_to_window_number[pid] = window_number
     
     # Generate filenames for unassigned photos (site/elevation)
     unassigned_photos = photos_by_window.get(None, [])
@@ -348,7 +357,14 @@ def _archive_response(photos: list[Photo], archive_filename: str, folder_name: s
         for photo_id, filename in unassigned_filenames:
             photo_id_to_filename[photo_id] = filename
     
-    # Build ZIP
+    # Build ZIP. Photos belonging to a window are nested under a "Window {N}/"
+    # subfolder (inside the outer church-name folder), so a technician can jump
+    # straight to a specific window's photos without wading through the whole
+    # project. Filenames inside each subfolder keep the existing "{N}{letter}.jpg"
+    # convention (e.g. "1a.jpg", "1b.jpg") rather than being simplified to just
+    # the letter, since the photos router's flat-download callers still rely on
+    # that same {label}.ext scheme. Unassigned/site/elevation photos (no window)
+    # stay directly in the church folder root, matching prior behavior.
     prefix = f"{folder_name}/" if folder_name else ""
     
     with zipfile.ZipFile(archive_buffer, "w", compression=zipfile.ZIP_DEFLATED) as archive:
@@ -360,16 +376,21 @@ def _archive_response(photos: list[Photo], archive_filename: str, folder_name: s
                 ext = Path(photo.original_filename or photo.storage_url).suffix or ".jpg"
                 filename = f"photo_{_id_stem(photo.id)}{ext}"
             
-            # Ensure unique path in ZIP
-            path = filename
-            stem = path[: -len(Path(path).suffix)] if Path(path).suffix else path
-            counter = 2
-            while path in used_paths:
-                path = f"{stem}_{counter}{Path(filename).suffix}"
-                counter += 1
-            used_paths.add(path)
+            window_number = photo_id_to_window_number.get(photo.id)
+            subfolder = f"Window {window_number}/" if window_number is not None else ""
             
-            archive.writestr(f"{prefix}{path}", _photo_bytes(photo))
+            # Ensure unique path in ZIP (uniqueness is scoped per-subfolder so
+            # window 1 and window 2 can each safely start their own path set)
+            path_key = f"{subfolder}{filename}"
+            stem = filename[: -len(Path(filename).suffix)] if Path(filename).suffix else filename
+            counter = 2
+            while path_key in used_paths:
+                filename_candidate = f"{stem}_{counter}{Path(filename).suffix}"
+                path_key = f"{subfolder}{filename_candidate}"
+                counter += 1
+            used_paths.add(path_key)
+            
+            archive.writestr(f"{prefix}{path_key}", _photo_bytes(photo))
     
     archive_buffer.seek(0)
     return StreamingResponse(
@@ -626,7 +647,10 @@ def update_photo(
         raise HTTPException(status_code=403, detail="Access denied")
     
     # AI analysis fields are staff-only editable
-    ai_fields = {"ai_panes", "ai_panels", "ai_sqft", "ai_pieces", "ai_analysis_notes"}
+    ai_fields = {
+        "ai_panes", "ai_panels", "ai_sqft", "ai_pieces", "ai_analysis_notes",
+        "ai_warping", "ai_lead_det", "ai_breaks", "ai_wood_rot", "ai_paint_fail",
+    }
     update_data = body.model_dump(exclude_unset=True)
     
     if current_user.role == "customer":
@@ -956,9 +980,23 @@ def analyze_photo_with_ai(
         '  "panels": <integer, number of panels>,',
         '  "estimated_sqft": <float or null>,',
         '  "pieces": <integer, estimated total individual glass pieces/quarries set in the came>,',
+        '  "warping": <integer 0-5 severity of frame/sash warping: 0=none, 1=very minor, '
+        '2=moderate, 3=significant, 4=severe, 5=critical, or null if not visible/assessable>,',
+        '  "lead_det": <integer 0-5 severity of lead came deterioration (sagging, cracking, '
+        'oxidation, bowing): same 0-5 scale as warping, or null if not visible/assessable>,',
+        '  "breaks": <integer, count of visibly cracked, broken, or missing glass pieces/panes '
+        'in this photo (0 if none visible)>,',
+        '  "wood_rot": <true|false|null, visible wood or frame rot/decay/damage>,',
+        '  "paint_fail": <true|false|null, visible peeling/failing paint or failing caulk on the frame>,',
         '  "confidence": "high" | "medium" | "low",',
         '  "notes": "<short caveats, e.g. \'partially obscured\', \'unclear angle\', \'diamond-quarry leaded glass, clear\', \'1 cracked pane visible\'>"',
         "}",
+        "",
+        "Condition fields (warping/lead_det/breaks/wood_rot/paint_fail) let this photo be graded "
+        "and rolled up into the project's Overview/Valuation report even when no field notes were "
+        "dictated. Use null (not 0/false) for any condition field you genuinely cannot assess from "
+        "this photo - e.g. a distant or heavily obscured shot. Only use 0/false when you can "
+        "actually see the frame/lead/glass well enough to confirm no issue is present.",
         "",
     ]
     
@@ -1041,6 +1079,11 @@ def analyze_photo_with_ai(
         ai_panels = payload.get("panels")
         ai_sqft = payload.get("estimated_sqft")
         ai_pieces = payload.get("pieces")
+        ai_warping = payload.get("warping")
+        ai_lead_det = payload.get("lead_det")
+        ai_breaks = payload.get("breaks")
+        ai_wood_rot = payload.get("wood_rot")
+        ai_paint_fail = payload.get("paint_fail")
         confidence = payload.get("confidence", "medium")
         notes = payload.get("notes", "")
         
@@ -1049,6 +1092,11 @@ def analyze_photo_with_ai(
         photo.ai_panels = ai_panels if isinstance(ai_panels, int) else None
         photo.ai_sqft = float(ai_sqft) if ai_sqft is not None and ai_sqft != "" else None
         photo.ai_pieces = ai_pieces if isinstance(ai_pieces, int) else None
+        photo.ai_warping = ai_warping if isinstance(ai_warping, int) and 0 <= ai_warping <= 5 else None
+        photo.ai_lead_det = ai_lead_det if isinstance(ai_lead_det, int) and 0 <= ai_lead_det <= 5 else None
+        photo.ai_breaks = ai_breaks if isinstance(ai_breaks, int) and ai_breaks >= 0 else None
+        photo.ai_wood_rot = ai_wood_rot if isinstance(ai_wood_rot, bool) else None
+        photo.ai_paint_fail = ai_paint_fail if isinstance(ai_paint_fail, bool) else None
         photo.ai_analyzed_at = datetime.utcnow()
         photo.ai_analysis_notes = notes[:500] if notes else None  # cap at 500 chars
         

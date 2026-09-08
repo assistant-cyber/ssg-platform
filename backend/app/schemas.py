@@ -173,6 +173,11 @@ class PhotoOut(BaseModel):
     ai_pieces: Optional[int] = None
     ai_analyzed_at: Optional[datetime] = None
     ai_analysis_notes: Optional[str] = None
+    ai_warping: Optional[int] = None
+    ai_lead_det: Optional[int] = None
+    ai_breaks: Optional[int] = None
+    ai_wood_rot: Optional[bool] = None
+    ai_paint_fail: Optional[bool] = None
     label: Optional[str] = None  # computed label (e.g. "1f")
     condition_data: Optional["ConditionDataOut"] = None
     pins: List["PhotoPinOut"] = []
@@ -196,6 +201,11 @@ class PhotoUpdate(BaseModel):
     ai_sqft: Optional[float] = None
     ai_pieces: Optional[int] = None
     ai_analysis_notes: Optional[str] = None
+    ai_warping: Optional[int] = None
+    ai_lead_det: Optional[int] = None
+    ai_breaks: Optional[int] = None
+    ai_wood_rot: Optional[bool] = None
+    ai_paint_fail: Optional[bool] = None
 
 
 class PhotoDownloadRequest(BaseModel):

@@ -110,6 +110,28 @@ def _ensure_additive_columns() -> None:
                 if column_name not in photo_columns:
                     conn.execute(text(f"ALTER TABLE photos ADD COLUMN {column_name} {column_type}"))
 
+        # AI-estimated condition assessment (warping/lead/breaks/rot/paint) -
+        # lets the report's Overview page populate Condition Breakdown / Frame
+        # Work from AI vision analysis alone, without requiring shorthand notes.
+        ai_condition_int_columns = {
+            "ai_warping": "INTEGER",
+            "ai_lead_det": "INTEGER",
+            "ai_breaks": "INTEGER",
+        }
+        with engine.begin() as conn:
+            for column_name, column_type in ai_condition_int_columns.items():
+                if column_name not in photo_columns:
+                    conn.execute(text(f"ALTER TABLE photos ADD COLUMN {column_name} {column_type}"))
+
+        ai_condition_bool_columns = ["ai_wood_rot", "ai_paint_fail"]
+        bool_type = "BOOLEAN"
+        with engine.begin() as conn:
+            for column_name in ai_condition_bool_columns:
+                if column_name not in photo_columns:
+                    # Nullable (no default/backfill needed) - unlike is_elevation,
+                    # these represent "not yet analyzed" as NULL, not False.
+                    conn.execute(text(f"ALTER TABLE photos ADD COLUMN {column_name} {bool_type}"))
+
 
 def create_tables() -> None:
     """Import all models so their metadata is registered, then create tables."""
