@@ -936,16 +936,28 @@ def analyze_photo_with_ai(
     
     # Build prompt
     prompt_parts = [
-        "Analyze this stained-glass window photo and estimate the following (respond with ONLY a JSON object):",
+        "Analyze this window photo for a stained-glass and leaded-glass restoration company, "
+        "and estimate the following (respond with ONLY a JSON object):",
+        "",
+        "IMPORTANT SCOPE: This company works on window glazing far beyond colored pictorial "
+        "stained glass. Treat ALL of the following as in-scope windows to analyze normally "
+        "(never zero these out just because the glass isn't colored):",
+        "  - Colored/pictorial stained glass (traditional church windows, figures, scenes)",
+        "  - Leaded/came windows with clear, textured, or lightly tinted glass in diamond-quarry, "
+        "square, or lattice patterns (very common in Gothic/Tudor-revival churches and homes)",
+        "  - Beveled glass panels set in lead or zinc came",
+        "  - Any window built from individual glass pieces joined by lead, zinc, or brass came, "
+        "regardless of color - this is leaded glazing and is core to this company's work",
+        "  - Windows with cracked, broken, or missing individual panes/quarries within a leaded frame",
         "",
         "Required JSON format:",
         "{",
         '  "panes": <integer, number of distinct panes or sections>,',
         '  "panels": <integer, number of panels>,',
         '  "estimated_sqft": <float or null>,',
-        '  "pieces": <integer, estimated total glass pieces>,',
+        '  "pieces": <integer, estimated total individual glass pieces/quarries set in the came>,',
         '  "confidence": "high" | "medium" | "low",',
-        '  "notes": "<short caveats, e.g. \'partially obscured\', \'unclear angle\'>"',
+        '  "notes": "<short caveats, e.g. \'partially obscured\', \'unclear angle\', \'diamond-quarry leaded glass, clear\', \'1 cracked pane visible\'>"',
         "}",
         "",
     ]
@@ -963,7 +975,13 @@ def analyze_photo_with_ai(
         )
     
     prompt_parts.append("")
-    prompt_parts.append("If this is NOT a stained-glass window, set notes to explain what it is and return zeros/nulls for counts.")
+    prompt_parts.append(
+        "Only return zeros/nulls for counts (and explain in notes) if this photo shows something "
+        "that is NOT a window at all - e.g. a person, vehicle, receipt, unrelated object, or a "
+        "plain modern window with no leaded/came construction. A window IS in scope whenever you "
+        "can see individual glass pieces joined by came/lead lines, even if the glass is clear or "
+        "a single color and even if some panes are cracked or broken."
+    )
     
     prompt = "\n".join(prompt_parts)
     
