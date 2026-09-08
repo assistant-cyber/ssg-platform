@@ -463,17 +463,23 @@ async def upload_photo(
     # Async: generate thumbnail in background, don't block the response
     import asyncio
     async def _thumbnail_bg(pid: str, p_url: str, pname: str):
-        import time; time.sleep(0.5)  # small delay to let photo upload settle
+        await asyncio.sleep(0.5)  # small delay to let photo upload settle (non-blocking)
         try:
             from app.database import SessionLocal
             from app.models import Photo
+            loop = asyncio.get_event_loop()
             db = SessionLocal()
             try:
                 photo = db.query(Photo).filter(Photo.id == pid).first()
                 if photo and not photo.thumbnail_url:
-                    thumb_bytes = storage._make_thumbnail(storage.download_bytes(p_url))
+                    # Run blocking I/O in thread pool so we don't block the event loop
+                    thumb_bytes = await loop.run_in_executor(
+                        None, lambda: storage._make_thumbnail(storage.download_bytes(p_url))
+                    )
                     thumb_filename = storage._thumbnail_name(pname)
-                    thumb_url = storage.upload_file(thumb_bytes, project_id, thumb_filename, subfolder="photos/thumbs", content_type="image/jpeg")
+                    thumb_url = await loop.run_in_executor(
+                        None, lambda: storage.upload_file(thumb_bytes, project_id, thumb_filename, subfolder="photos/thumbs", content_type="image/jpeg")
+                    )
                     photo.thumbnail_url = thumb_url
                     db.commit()
             finally:
