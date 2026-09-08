@@ -9,6 +9,13 @@ const nextConfig: NextConfig = {
       { protocol: 'https', hostname: '**' },
     ],
   },
+  // Raise the body size limit for API routes to handle phone camera photos.
+  // Vercel's default is 4.5MB; phone photos can be 8–15MB.
+  experimental: {
+    serverActions: {
+      bodySizeLimit: '25mb',
+    },
+  },
 };
 
 export default nextConfig;

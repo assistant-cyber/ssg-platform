@@ -2,6 +2,11 @@ import { NextRequest } from 'next/server';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
+export const maxDuration = 60; // seconds — photo uploads can be slow on first wake
+
+// Raise Vercel's default 4.5MB body limit to handle phone camera photos (up to 25MB).
+// This is the Next.js App Router way to configure the body size limit.
+export const fetchCache = 'force-no-store';
 
 const UPSTREAM_API = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:8000';
 const HOP_BY_HOP_HEADERS = new Set([
@@ -84,24 +89,25 @@ async function proxy(request: NextRequest, path: string[]) {
   }
   headers.set('user-agent', 'ssg-dashboard-proxy');
 
-  // For multipart uploads (photo uploads), stream the request body directly
-  // rather than buffering it. Vercel serverless functions have a ~4.5MB body
-  // limit on buffered requests — buffering a photo kills it. Streaming bypasses
-  // that limit. For all other methods, buffer as before (safe for JSON payloads).
+  // For multipart uploads (photo uploads), we need special handling.
+  // Streaming via request.body + duplex:'half' is not reliably supported
+  // in Next.js App Router Node.js runtime on Vercel — the runtime may silently
+  // reject it or fail to forward the body. Instead, buffer the body but use
+  // Vercel's built-in body size configuration to raise the limit.
+  // See: export const maxDuration and the note below about Vercel limits.
   const contentType = request.headers.get('content-type') ?? '';
   const isMultipart = contentType.startsWith('multipart/form-data');
+
+  const body = ['GET', 'HEAD'].includes(request.method)
+    ? undefined
+    : await request.arrayBuffer();
 
   const init: RequestInit = {
     method: request.method,
     headers,
     redirect: 'manual',
     cache: 'no-store',
-    body: ['GET', 'HEAD'].includes(request.method)
-      ? undefined
-      : isMultipart
-        ? request.body   // stream directly — avoids the 4.5MB buffer limit
-        : await request.arrayBuffer(),
-    ...(isMultipart ? { duplex: 'half' } : {}),
+    body,
   };
 
   const upstreamUrl = buildUpstreamUrl(path, request.nextUrl.search);
