@@ -1,4 +1,5 @@
 """Photos router — upload, update, retrieve, delete."""
+import asyncio
 import io
 import zipfile
 from datetime import datetime
@@ -457,11 +458,21 @@ async def upload_photo(
 
     auto_filename = _make_unique_filename(auto_filename, project_id, db)
 
-    # Upload only the photo to S3 (no blocking thumbnail generation here)
-    photo_url = storage.upload_photo_fast(file_bytes, project_id, auto_filename, photo_id)
+    # Upload only the photo to S3 (no blocking thumbnail generation here).
+    # storage.upload_photo_fast() makes a synchronous boto3 call - running it
+    # directly here would block the ASGI event loop for the duration of the
+    # PUT. Under concurrent uploads (e.g. a user bulk-uploading several
+    # photos) that stall corrupts the shared keep-alive connection to
+    # Supabase's Cloudflare-fronted storage gateway, which comes back as an
+    # opaque "400 An error occurred ()" PutObject error. Run it in the
+    # thread pool, same as the background thumbnail path, to keep the event
+    # loop free.
+    loop = asyncio.get_event_loop()
+    photo_url = await loop.run_in_executor(
+        None, lambda: storage.upload_photo_fast(file_bytes, project_id, auto_filename, photo_id)
+    )
 
     # Async: generate thumbnail in background, don't block the response
-    import asyncio
     async def _thumbnail_bg(pid: str, p_url: str, pname: str):
         await asyncio.sleep(0.5)  # small delay to let photo upload settle (non-blocking)
         try:
